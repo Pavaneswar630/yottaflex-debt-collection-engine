@@ -4,7 +4,7 @@ A Python project scaffold for a synthetic, explainable debt-collection workflow.
 
 ## Status
 
-This repository currently contains a CI-less project skeleton and requirements traceability matrix. The workflow, data generator, validation rules, and full test suite are not implemented yet; see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) for the mapped implementation and verification targets.
+This repository contains a CI-less project scaffold, a YAML source-of-truth data dictionary, and generated PostgreSQL DDL and schema documentation. The workflow, data generator, validation rules, and full test suite are not implemented yet; see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) for implementation status.
 
 ## Requirements
 
@@ -27,7 +27,10 @@ The current command is a scaffold entry point and does not generate data yet.
 ```shell
 make test
 make run
+make schema
 ```
+
+`make schema` regenerates `schema/schema.sql`, `docs/DATA_DICTIONARY.md`, and `docs/ER_DIAGRAM.md` from `schema/data_dictionary.yaml`. To verify generated files without modifying them, run `python tools/generate_schema.py --check`.
 
 Equivalent direct commands are `python -m unittest discover -s tests -v` and `python -m yottaflex_debt_collection --help`.
 
@@ -37,4 +40,8 @@ The fixed-seed, parameterized generator and CSV/JSON/SQL exports described in th
 
 - `src/yottaflex_debt_collection/`: package entry point and planned domain modules for models, generation, prioritization, contact policy, payment reconciliation, and validation.
 - `tests/`: local tests; currently contains only a scaffold smoke test.
+- `schema/data_dictionary.yaml`: canonical entity, field, validation, and relationship definitions.
+- `schema/schema.sql`: generated PostgreSQL table definitions.
+- `docs/DATA_DICTIONARY.md`, `docs/ER_DIAGRAM.md`: generated field reference and Mermaid ER diagram.
+- `tools/generate_schema.py`: generator and staleness check for the schema artifacts.
 - `docs/TRACEABILITY.md`: maps each requirement in the brief to its planned code, test, or documentation target and records implementation status.
