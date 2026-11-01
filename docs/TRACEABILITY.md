@@ -117,7 +117,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 | **P04** For any external source, record URL, dataset/version, retrieval date, license/terms, attribution, transformations, and discarded fields. | `generator.py` | `test_source_manifest.py` | `docs/GENERATION.md` ; status: Planned; no external data currently used |
 | **P05** Use only legally accessible and redistributable data; do not bypass access controls or collect confidential/personal information. | `generator.py` | `test_synthetic_only_mode.py`, `test_source_manifest.py` | README; `docs/GENERATION.md` ; status: No external or personal data included |
 | **P06** If licensing or suitability is unclear, use synthetic data and cite public reference data only for schema inspiration. | `generator.py` | `test_synthetic_only_mode.py` | `docs/GENERATION.md` ; status: Planned |
-| **P07** Push the code to a public GitHub repository before submission. | Repository setup/release process | Not applicable | README ; status: Not performed by this local scaffold |
+| **P07** Push the code to a public GitHub repository before submission. | Repository setup/release process | `git ls-remote origin` | README ; status: Public repository verified; checklist changes pushed to `main` as `7dd688c` |
 | **P08** Add a README explaining how to run it. | `cli.py` | `test_cli.py` | README ; status: Scaffold usage instructions added; data-generation command awaits implementation |
 | **P09** Include any tests requested by the problem. | All domain modules | `tests/` | README; this matrix ; status: Smoke test exists; domain tests are planned |
 | **P10** Create the repository, `pyproject.toml`, Makefile, and CI-less skeleton. | Project root and `src/yottaflex_debt_collection/` | `test_cli.py` | README; this matrix ; status: Scaffold created; no CI workflow add |
@@ -127,14 +127,14 @@ This matrix maps every requirement statement and list item in the supplied brief
 
 | Brief sentence | Module | Test | Doc |
 |---|---|---|---|
-| Initialize the local repository, create/confirm its public GitHub repository, and push the skeleton. | Git repository; GitHub remote | Manual remote visibility check | README ; status: Git initialized; existing repository `Pavaneswar630/yottaflex-debt-collection-engine` confirmed public; pending push because GitHub CLI has no authenticated user |
+| Initialize the local repository, create/confirm its public GitHub repository, and push the skeleton. | Git repository; GitHub remote | `git ls-remote origin` | README ; status: Git initialized; existing repository `Pavaneswar630/yottaflex-debt-collection-engine` confirmed public; changes pushed to `main` |
 | Create Makefile stubs for `setup`, `data`, `data-starter`, `validate`, `repro`, `test`, `api`, `ui`, `demo`, and `eval-ai`. | `Makefile` | `tests/test_makefile_targets.py` | README |
 | Record the ambiguity that `CTP-<case-id>-001` is not tied to an entity; assume ContactAttempt, add `PTP-<case-id>-001` for PromiseToPay, and log the customer question. | `ids.py`, `schema/data_dictionary.yaml` | `tests/test_ids.py` | `docs/ASSUMPTIONS.md` ; status: customer confirmation pending |
 | Assume three installments per loan because 30,000 / 10,000 = 3. | `settings.py` | `test_foundations.py::ReproducibilityDefaultsTests` | `docs/ASSUMPTIONS.md` |
 | Use Customer, Account, and CaseStateHistory IDs `CUS-000001`, `ACC-000001`, and `CSH-000001`. | `ids.py`, `schema/data_dictionary.yaml`, `schema/schema.sql` | `tests/test_ids.py` | `docs/ASSUMPTIONS.md` |
 | Fix the as-of date to 2026-10-31 and define a fixed generation date. | `settings.py` | `test_foundations.py::ReproducibilityDefaultsTests` | `docs/ASSUMPTIONS.md`, `docs/GENERATION.md` |
 | Validate the dictionary using a small Pydantic loader. | `schema_loader.py` | `tests/test_schema_loader.py` | `schema/data_dictionary.yaml` |
-| Keep the local changes committed and push them to the already-existing public GitHub repository. | Git repository; GitHub remote | `git status`, `git ls-remote` | README ; status: authentication unavailable; push remains blocked |
+| Keep the local changes committed and push them to the already-existing public GitHub repository. | Git repository; GitHub remote | `git status`, `git ls-remote` | README ; status: Commit `7dd688c` pushed; branch verified on remote |
 
 ## Numbered workflow rules and generation steps
 
