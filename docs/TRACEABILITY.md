@@ -103,4 +103,4 @@ This matrix maps every requirement statement and list item in the supplied brief
 | P07 | Push the code to a public GitHub repository before submission. | Repository setup/release process | Not applicable | README | Not performed by this local scaffold |
 | P08 | Add a README explaining how to run it. | `cli.py` | `test_cli.py` | README | Scaffold usage instructions added; data-generation command awaits implementation |
 | P09 | Include any tests requested by the problem. | All domain modules | `tests/` | README; this matrix | Smoke test exists; domain tests are planned |
-| P10 | Create the repository, `pyproject.toml`, Makefile, and CI-less skeleton. | Project root and `src/yottaflex_debt_collection/` | `test_cli.py` | README; this matrix | Scaffold created; no CI workflow added |
+| P10 | Create the repository, `pyproject.toml`, Makefile, and CI-less skeleton. | Project root and `src/yottaflex_debt_collection/` | `test_cli.py` | README; this matrix | Scaffold created; no CI workflow add |
