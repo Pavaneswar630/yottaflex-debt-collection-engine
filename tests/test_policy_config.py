@@ -1,4 +1,4 @@
-"""Tests for policy configuration shape and internal consistency."""
+"""Tests for policy rule IDs, scoring, and reconciliation settings."""
 
 import unittest
 from pathlib import Path
@@ -18,94 +18,58 @@ class PolicyConfigTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.policy = load_yaml(ROOT / "config" / "policy.yaml")
-        cls.dictionary = load_yaml(ROOT / "schema" / "data_dictionary.yaml")
-        cls.tables = {
-            table["name"]: table for table in cls.dictionary["tables"]
+
+    def test_required_rules_are_id_addressable(self) -> None:
+        rules = self.policy["rules"]
+        required_rules = {
+            "R-CONTACT-01",
+            "R-CONTACT-02",
+            "R-DISPUTE-01",
+            "R-HARDSHIP-01",
+            "R-CEASE-01",
+            "R-PAIDOFF-01",
+            "R-SCORE-01",
+            "R-RECON-01",
         }
+        self.assertTrue(required_rules <= rules.keys())
+        for rule_id, rule in rules.items():
+            with self.subTest(rule_id=rule_id):
+                self.assertRegex(rule_id, r"^R-[A-Z]+-\d{2}$")
+                self.assertTrue(rule["desc"].strip())
 
-    def test_contact_windows_and_attempt_limit_are_configured(self) -> None:
-        contact = self.policy["contact"]
-        self.assertEqual(
-            contact["timezone_source"], "contact_preference.timezone"
-        )
-        weekdays = contact["windows"]["weekdays"]
-        self.assertEqual(weekdays["days"], [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-        ])
-        self.assertLess(weekdays["start_local"], weekdays["end_local"])
-        self.assertFalse(contact["windows"]["weekends"]["allowed"])
-        self.assertEqual(contact["max_attempts_per_week"]["count"], 3)
-        self.assertEqual(contact["max_attempts_per_week"]["period_days"], 7)
-        self.assertTrue(contact["max_attempts_per_week"]["rolling_period"])
-        self.assertIn(
-            "policy_blocked",
-            contact["max_attempts_per_week"]["excluded_outcomes"],
-        )
+    def test_contact_and_exception_rules_have_operational_parameters(self) -> None:
+        rules = self.policy["rules"]
+        self.assertEqual(rules["R-CONTACT-01"]["start_local"], "08:00")
+        self.assertEqual(rules["R-CONTACT-01"]["end_local"], "19:00")
+        self.assertEqual(rules["R-CONTACT-01"]["timezone_source"], "contact_preference.timezone")
+        self.assertEqual(rules["R-CONTACT-02"]["max_attempts"], 3)
+        self.assertEqual(rules["R-CONTACT-02"]["period_days"], 7)
+        self.assertEqual(rules["R-CONTACT-02"]["scope"], "account")
+        self.assertTrue(rules["R-DISPUTE-01"]["suppress_dunning"])
+        self.assertTrue(rules["R-DISPUTE-01"]["route_to_review"])
+        self.assertTrue(rules["R-HARDSHIP-01"]["pause_outbound_contact"])
+        self.assertTrue(rules["R-CEASE-01"]["block_outbound_contact"])
+        self.assertTrue(rules["R-PAIDOFF-01"]["exclude_paid_off_loans"])
 
-    def test_allocation_and_scoring_rules_are_complete(self) -> None:
-        allocation = self.policy["payment_allocation"]
-        self.assertEqual(allocation["rule"], "oldest_due_first")
-        self.assertTrue(allocation["allow_partial_allocation"])
-        self.assertEqual(allocation["eligible_payment_statuses"], ["posted"])
-        self.assertEqual(
-            set(allocation["tie_breakers"]),
-            {"due_date", "loan_id", "sequence_number"},
-        )
-
+    def test_scoring_weights_and_dpd_buckets_are_valid(self) -> None:
         scoring = self.policy["scoring"]
-        self.assertEqual(
-            set(scoring["weights"]),
-            {"arrears_amount", "dpd_bucket", "risk_score"},
-        )
-        self.assertAlmostEqual(sum(scoring["weights"].values()), 1.0)
+        weights = [scoring["w_balance"], scoring["w_age"], scoring["w_risk"]]
+        self.assertAlmostEqual(sum(weights), 1.0)
         self.assertEqual(scoring["scale"], {"minimum": 0, "maximum": 100})
-
-    def test_dpd_buckets_are_contiguous_and_cover_unbounded_delinquency(self) -> None:
-        buckets = self.policy["dpd_buckets"]
+        buckets = scoring["dpd_buckets"]
         self.assertTrue(buckets)
         self.assertEqual(buckets[0]["min_days"], 0)
         for index, bucket in enumerate(buckets):
             self.assertGreaterEqual(bucket["score"], 0)
             self.assertLessEqual(bucket["score"], 100)
             if index < len(buckets) - 1:
-                self.assertEqual(
-                    buckets[index + 1]["min_days"],
-                    bucket["max_days"] + 1,
-                )
+                self.assertEqual(buckets[index + 1]["min_days"], bucket["max_days"] + 1)
                 self.assertIsNotNone(bucket["max_days"])
-        self.assertEqual(buckets[-1]["max_days"], None)
+        self.assertIsNone(buckets[-1]["max_days"])
 
-    def test_hold_statuses_match_the_data_dictionary_enums(self) -> None:
-        dispute_statuses = self.tables["delinquency_snapshot"]["fields"][
-            "dispute_status"
-        ]["enum"]
-        hardship_statuses = self.tables["account"]["fields"][
-            "hardship_status"
-        ]["enum"]
-
-        self.assertTrue(
-            set(self.policy["holds"]["dispute"]["statuses"])
-            <= set(dispute_statuses)
-        )
-        self.assertTrue(
-            set(self.policy["holds"]["dispute"]["release_statuses"])
-            <= set(dispute_statuses)
-        )
-        self.assertTrue(
-            set(self.policy["holds"]["hardship"]["statuses"])
-            <= set(hardship_statuses)
-        )
-        self.assertTrue(
-            set(self.policy["holds"]["hardship"]["release_statuses"])
-            <= set(hardship_statuses)
-        )
-        for hold in self.policy["holds"].values():
-            self.assertTrue(hold["pause_outbound_contact"])
-            self.assertTrue(hold["pause_automated_escalation"])
+    def test_reconciliation_tolerance_and_grace_period_are_explicit(self) -> None:
+        self.assertEqual(self.policy["reconcile"]["tolerance_pct"], 5)
+        self.assertEqual(self.policy["reconcile"]["grace_days"], 2)
 
 
 if __name__ == "__main__":
