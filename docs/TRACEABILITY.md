@@ -1,6 +1,6 @@
 # Requirements traceability
 
-This matrix maps every requirement statement and list item in the supplied brief to a code, test, or documentation target. This is a scaffold: code targets identify intended ownership, not completed functionality. Only the CLI smoke test is implemented. Feature tests and domain documentation are planned and must be added alongside their implementations.
+This matrix maps every requirement statement and list item in the supplied brief to a code, test, or documentation target. This is a scaffold: code targets identify intended ownership, not completed functionality. The YAML data dictionary, generated SQL, field reference, and ER diagram are implemented; the workflow, data generator, validation rules, and remaining feature tests are planned.
 
 | ID | Brief requirement | Code target | Test target | Documentation target | Status |
 |---|---|---|---|---|---|
@@ -31,10 +31,10 @@ This matrix maps every requirement statement and list item in the supplied brief
 | W08 | Record contact outcomes and promises. | `contacts.py`, `models.py` | `test_contact_events.py`, `test_promise_lifecycle.py` | `docs/DATA_DICTIONARY.md` | Planned |
 | W09 | Reconcile payments to commitments. | `reconciliation.py` | `test_reconciliation.py` | `docs/VALIDATION.md` | Planned |
 | W10 | Persist state changes as explicit records/events where relevant; do not overwrite history. | `models.py`, `contacts.py`, `reconciliation.py` | `test_event_history.py` | `docs/ARCHITECTURE.md` | Planned |
-| W11 | Core entities are Customer, Account, Loan, Installment, DelinquencySnapshot, ContactPreference, ContactAttempt, PromiseToPay, Payment, and CollectionCase. | `models.py` | `test_entity_schema.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| W12 | Define a primary key for every entity and foreign keys for every relationship. | `models.py`, `validation.py` | `test_primary_keys.py`, `test_foreign_keys.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| W13 | Document cardinality (1:1, 1:N, N:M), optional relationships, effective dates, and lifecycle states. | `models.py` | `test_relationships.py`, `test_lifecycle_transitions.py` | `docs/DATA_DICTIONARY.md`, `docs/ARCHITECTURE.md` | Planned |
-| W14 | Use bridge tables for many-to-many relationships; retain event history for state changes; validate all joins. | `models.py`, `validation.py` | `test_relationships.py`, `test_event_history.py`, `test_foreign_keys.py` | `docs/ARCHITECTURE.md` | Planned |
+| W11 | Core entities are Customer, Account, Loan, Installment, DelinquencySnapshot, ContactPreference, ContactAttempt, PromiseToPay, Payment, and CollectionCase. | `schema/data_dictionary.yaml` | `test_schema_generation.py` | `docs/DATA_DICTIONARY.md` | Schema defined; domain implementation planned |
+| W12 | Define a primary key for every entity and foreign keys for every relationship. | `schema/data_dictionary.yaml`, `tools/generate_schema.py` | `test_schema_generation.py` | `schema/schema.sql` | Schema and generated constraints complete |
+| W13 | Document cardinality (1:1, 1:N, N:M), optional relationships, effective dates, and lifecycle states. | `schema/data_dictionary.yaml` | `test_schema_generation.py` | `docs/DATA_DICTIONARY.md`, `docs/ER_DIAGRAM.md` | Schema documentation complete; lifecycle implementation planned |
+| W14 | Use bridge tables for many-to-many relationships; retain event history for state changes; validate all joins. | `schema/data_dictionary.yaml`, `tools/generate_schema.py` | `test_schema_generation.py` | `docs/DATA_DICTIONARY.md`, `docs/ER_DIAGRAM.md` | Allocation bridge defined; event-history and join validation planned |
 | W15 | Deliberate anomaly cases retain an issue_type/ground_truth label instead of silently corrupting unrelated rows. | `generator.py`, `models.py`, `validation.py` | `test_labeled_anomalies.py` | `docs/VALIDATION.md` | Planned |
 
 ## IDs, generation, and data coverage
@@ -46,8 +46,8 @@ This matrix maps every requirement statement and list item in the supplied brief
 | G03 | Use COL-2026-000001 collection-case IDs. | `generator.py` | `test_id_conventions.py` | `docs/DATA_DICTIONARY.md` | Planned |
 | G04 | Use CTP-<case-id>-001 contact-attempt IDs. | `generator.py` | `test_id_conventions.py` | `docs/DATA_DICTIONARY.md` | Planned |
 | G05 | Use PMT-2026-000001 payment IDs. | `generator.py` | `test_id_conventions.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| G06 | Write a data dictionary covering all ten named entities. | `models.py` | `test_entity_schema.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| G07 | Specify every field's type, required/optional status, allowed values, units, uniqueness, and validation rule. | `models.py`, `validation.py` | `test_entity_schema.py`, `test_allowed_values.py` | `docs/DATA_DICTIONARY.md` | Planned |
+| G06 | Write a data dictionary covering all ten named entities. | `schema/data_dictionary.yaml`, `tools/generate_schema.py` | `test_schema_generation.py` | `docs/DATA_DICTIONARY.md` | Complete; includes payment allocation bridge |
+| G07 | Specify every field's type, required/optional status, allowed values, units, uniqueness, and validation rule. | `schema/data_dictionary.yaml`, `tools/generate_schema.py` | `test_schema_generation.py` | `docs/DATA_DICTIONARY.md` | Complete |
 | G08 | Create parent/master tables before child and event tables. | `generator.py` | `test_generation_order.py` | `docs/ARCHITECTURE.md` | Planned |
 | G09 | Keep counters zero-padded, IDs immutable, and referenced IDs exactly consistent across files. | `generator.py`, `validation.py` | `test_id_conventions.py`, `test_foreign_keys.py` | `docs/VALIDATION.md` | Planned |
 | G10 | Generate 10,000 loans and 30,000 installments across 12 months. | `generator.py` | `test_full_scale_profile.py` | README; `docs/GENERATION.md` | Planned |
