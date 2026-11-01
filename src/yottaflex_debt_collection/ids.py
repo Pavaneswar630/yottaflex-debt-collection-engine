@@ -13,6 +13,8 @@ _GLOBAL_ID_PREFIXES = {
     "collection_case": "COL-2026",
     "case_state_history": "CSH",
     "payment": "PMT-2026",
+    "dispute": "DIS-2026",
+    "hardship_request": "HRS-2026",
 }
 _LOAN_ID = re.compile(r"LOAN-2026-\d{6}\Z")
 _CASE_ID = re.compile(r"COL-2026-\d{6}\Z")

@@ -4,17 +4,17 @@ setup:
 	python -m pip install -e ".[dev]"
 
 data:
-	@echo "TODO: full synthetic dataset generator is not implemented yet."
+	python -m yottaflex_debt_collection --loans 10000 --seed 20261022
 
 data-starter:
-	@echo "TODO: starter dataset generator is not implemented yet."
+	python -m yottaflex_debt_collection --loans 100 --seed 20261022
 
 validate:
 	python -c "from yottaflex_debt_collection.schema_loader import load_dictionary; print(f'Validated {len(load_dictionary().tables)} tables')"
 	python tools/generate_schema.py --check
 
 repro:
-	@echo "TODO: dataset regeneration and checksum comparison are not implemented yet."
+	python -m pytest tests/test_generator.py -k seed_repeats_records_and_export_checksums
 
 test:
 	python -m pytest

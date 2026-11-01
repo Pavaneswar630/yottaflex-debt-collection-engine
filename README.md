@@ -4,7 +4,7 @@ A Python project scaffold for a synthetic, explainable debt-collection workflow.
 
 ## Status
 
-This repository contains a CI-less project scaffold, a YAML source-of-truth data dictionary, hand-maintained PostgreSQL DDL, generated schema documentation, policy rules, and deterministic ID/RNG/money foundations. The end-to-end workflow, data generator, and full validation suite are not implemented yet; see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) for implementation status.
+This repository contains a YAML source-of-truth data dictionary, hand-maintained PostgreSQL DDL, generated schema documentation, policy rules, deterministic ID/RNG/money foundations, and a reproducible synthetic CSV generator. The broader collection workflow is still under development; see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) for implementation status.
 
 ## Requirements
 
@@ -18,9 +18,10 @@ python -m venv .venv
 # Activate the virtual environment using the command for your shell.
 python -m pip install -e ".[dev]"
 python -m yottaflex_debt_collection --help
+python -m yottaflex_debt_collection --loans 10000 --seed 20261022
 ```
 
-The current command is a scaffold entry point and does not generate data yet.
+The generator writes entity CSVs under `data/` and isolated labels to `ground_truth/latent_segments.csv`. Use `--output-dir PATH` to write beneath another dataset root. `--loans` defaults to 10,000 and `--seed` defaults to 20261022.
 
 ## Development
 
@@ -33,16 +34,16 @@ make schema
 
 `make schema` regenerates `docs/DATA_DICTIONARY.md` from `schema/data_dictionary.yaml`. `schema/schema.sql` and `docs/ER.md` are hand-maintained; keep them aligned with the YAML dictionary. To verify generated documentation without modifying it, run `python tools/generate_schema.py --check`.
 
-`make data`, `make data-starter`, `make repro`, `make api`, `make ui`, `make demo`, and `make eval-ai` are explicit stubs until those features are implemented. The as-of and generation dates are both fixed to `2026-10-31`; the seed is `20261022`.
+`make data` creates the full 10,000-loan dataset; `make data-starter` creates a 100-loan sample; `make repro` checks repeat-generation checksums. The API, UI, demo, and AI-evaluation targets remain stubs. The as-of and generation dates are fixed to `2026-10-31`.
 
-The fixed-seed, parameterized generator and CSV/JSON/SQL exports described in the brief are planned work, not available commands in this scaffold. No external or personal data is included. This project has no CI configuration by design.
+The generator creates synthetic customer risk bands and timezones, accounts, loans, quarterly installment schedules, effective-dated contact preferences, optional dispute and hardship records, payments, and oldest-first payment allocations. Any unapplied payment balance is recorded explicitly. Latent behavior labels use the requested approximate proportions and are kept outside the input CSVs. No external or personal data is included. This project has no CI configuration by design.
 
-The generation foundations use seed `20261022`, fixed dates, named NumPy child streams, sequential ID factories, and integer cents in code and schema. See [docs/GENERATION.md](docs/GENERATION.md); the end-to-end generator is not yet implemented.
+The generation foundations use a configurable seed, fixed dates, named NumPy child streams, sequential ID factories, and integer cents in code and schema. See [docs/GENERATION.md](docs/GENERATION.md) for output details and validation.
 
 ## Project layout
 
-- `src/yottaflex_debt_collection/`: package entry point and planned domain modules for models, generation, prioritization, contact policy, payment reconciliation, and validation.
-- `tests/`: pytest coverage for IDs, the data dictionary, policy, Make targets, and CLI foundations.
+- `src/yottaflex_debt_collection/`: package CLI, synthetic generator, deterministic foundations, and planned prioritization, contact-policy, and promise-reconciliation modules.
+- `tests/`: pytest coverage for IDs, the data dictionary, policy, Make targets, CLI, and generator reproducibility.
 - `schema/data_dictionary.yaml`: canonical entity, field, validation, and relationship definitions.
 - `config/policy.yaml`: ID-addressable example rules for contact limits, disputes, hardship, cease-contact requests, paid-off loans, scoring, payment allocation, and reconciliation. Review with compliance counsel before production use.
 - `schema/schema.sql`: hand-maintained PostgreSQL DDL with constraints and FK indexes.

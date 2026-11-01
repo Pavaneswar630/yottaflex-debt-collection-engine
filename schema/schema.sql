@@ -5,12 +5,16 @@ CREATE TABLE customer (
     customer_id VARCHAR(32) NOT NULL,
     customer_type VARCHAR(16) NOT NULL,
     display_name VARCHAR(120) NOT NULL,
+    risk_band VARCHAR(12) NOT NULL,
+    timezone VARCHAR(64) NOT NULL,
     preferred_language VARCHAR(16),
     created_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT customer_pkey PRIMARY KEY (customer_id),
     CONSTRAINT customer_customer_id_check CHECK (customer_id ~ '^CUS-[0-9]{6}$'),
     CONSTRAINT customer_customer_type_enum CHECK (customer_type IN ('individual', 'organization')),
-    CONSTRAINT customer_display_name_check CHECK (length(trim(display_name)) BETWEEN 1 AND 120)
+    CONSTRAINT customer_display_name_check CHECK (length(trim(display_name)) BETWEEN 1 AND 120),
+    CONSTRAINT customer_risk_band_enum CHECK (risk_band IN ('low', 'medium', 'high', 'critical')),
+    CONSTRAINT customer_timezone_check CHECK (length(trim(timezone)) > 0)
 );
 
 CREATE TABLE account (
@@ -117,6 +121,48 @@ CREATE TABLE contact_preference (
     CONSTRAINT contact_preference_account_start UNIQUE (account_id, effective_from)
 );
 
+CREATE TABLE dispute (
+    dispute_id VARCHAR(32) NOT NULL,
+    account_id VARCHAR(32) NOT NULL,
+    loan_id VARCHAR(32) NOT NULL,
+    filed_at TIMESTAMPTZ NOT NULL,
+    reason_code VARCHAR(32) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT dispute_pkey PRIMARY KEY (dispute_id),
+    CONSTRAINT dispute_id_check CHECK (dispute_id ~ '^DIS-2026-[0-9]{6}$'),
+    CONSTRAINT dispute_account_fkey FOREIGN KEY (account_id) REFERENCES account (account_id) ON DELETE RESTRICT,
+    CONSTRAINT dispute_loan_fkey FOREIGN KEY (loan_id) REFERENCES loan (loan_id) ON DELETE RESTRICT,
+    CONSTRAINT dispute_reason_enum CHECK (
+        reason_code IN ('balance_question', 'payment_not_posted', 'identity_question')
+    ),
+    CONSTRAINT dispute_status_enum CHECK (status IN ('under_review', 'resolved', 'withdrawn')),
+    CONSTRAINT dispute_resolution_state CHECK ((status = 'under_review') = (resolved_at IS NULL)),
+    CONSTRAINT dispute_resolution_order CHECK (resolved_at IS NULL OR resolved_at >= filed_at)
+);
+
+CREATE TABLE hardship_request (
+    hardship_request_id VARCHAR(32) NOT NULL,
+    account_id VARCHAR(32) NOT NULL,
+    loan_id VARCHAR(32) NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL,
+    reason_code VARCHAR(24) NOT NULL,
+    status VARCHAR(12) NOT NULL,
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT hardship_request_pkey PRIMARY KEY (hardship_request_id),
+    CONSTRAINT hardship_request_id_check CHECK (hardship_request_id ~ '^HRS-2026-[0-9]{6}$'),
+    CONSTRAINT hardship_request_account_fkey FOREIGN KEY (account_id) REFERENCES account (account_id) ON DELETE RESTRICT,
+    CONSTRAINT hardship_request_loan_fkey FOREIGN KEY (loan_id) REFERENCES loan (loan_id) ON DELETE RESTRICT,
+    CONSTRAINT hardship_request_reason_enum CHECK (
+        reason_code IN ('income_loss', 'medical', 'disaster', 'other')
+    ),
+    CONSTRAINT hardship_request_status_enum CHECK (status IN ('requested', 'approved', 'declined')),
+    CONSTRAINT hardship_resolution_state CHECK ((status = 'requested') = (resolved_at IS NULL)),
+    CONSTRAINT hardship_resolution_order CHECK (resolved_at IS NULL OR resolved_at >= requested_at)
+);
+
 CREATE TABLE collection_case (
     case_id VARCHAR(32) NOT NULL,
     account_id VARCHAR(32) NOT NULL,
@@ -174,6 +220,7 @@ CREATE TABLE payment (
     received_at TIMESTAMPTZ NOT NULL,
     posted_at TIMESTAMPTZ,
     amount BIGINT NOT NULL,
+    unapplied_amount BIGINT NOT NULL,
     currency CHAR(3) NOT NULL,
     payment_method VARCHAR(16) NOT NULL,
     status VARCHAR(12) NOT NULL,
@@ -183,6 +230,7 @@ CREATE TABLE payment (
     CONSTRAINT payment_payment_id_check CHECK (payment_id ~ '^PMT-2026-[0-9]{6}$'),
     CONSTRAINT payment_account_id_fkey FOREIGN KEY (account_id) REFERENCES account (account_id) ON DELETE RESTRICT,
     CONSTRAINT payment_amount_check CHECK (amount > 0),
+    CONSTRAINT payment_unapplied_amount_check CHECK (unapplied_amount BETWEEN 0 AND amount),
     CONSTRAINT payment_currency_check CHECK (currency ~ '^[A-Z]{3}$'),
     CONSTRAINT payment_payment_method_enum CHECK (payment_method IN ('bank_transfer', 'card', 'cash', 'direct_debit', 'other')),
     CONSTRAINT payment_status_enum CHECK (status IN ('pending', 'posted', 'returned', 'reversed')),
@@ -278,6 +326,10 @@ CREATE INDEX loan_account_id_idx ON loan (account_id);
 CREATE INDEX installment_loan_id_idx ON installment (loan_id);
 CREATE INDEX delinquency_snapshot_loan_id_idx ON delinquency_snapshot (loan_id);
 CREATE INDEX contact_preference_account_id_idx ON contact_preference (account_id);
+CREATE INDEX dispute_account_id_idx ON dispute (account_id);
+CREATE INDEX dispute_loan_id_idx ON dispute (loan_id);
+CREATE INDEX hardship_request_account_id_idx ON hardship_request (account_id);
+CREATE INDEX hardship_request_loan_id_idx ON hardship_request (loan_id);
 CREATE INDEX collection_case_account_id_idx ON collection_case (account_id);
 CREATE INDEX collection_case_loan_id_idx ON collection_case (loan_id);
 CREATE UNIQUE INDEX collection_case_one_open_per_loan_idx

@@ -29,6 +29,8 @@ class IdFactoryTests(unittest.TestCase):
         self.assertEqual(ids.next_id("customer"), "CUS-000001")
         self.assertEqual(ids.next_id("account"), "ACC-000001")
         self.assertEqual(ids.next_id("case_state_history"), "CSH-000001")
+        self.assertEqual(ids.next_id("dispute"), "DIS-2026-000001")
+        self.assertEqual(ids.next_id("hardship_request"), "HRS-2026-000001")
 
     def test_child_ids_are_scoped_to_valid_parent_ids(self) -> None:
         ids = IdFactory()

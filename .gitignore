@@ -7,3 +7,5 @@ build/
 dist/
 .coverage
 htmlcov/
+/data/
+/ground_truth/

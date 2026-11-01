@@ -23,6 +23,8 @@ ENTITY_STREAMS = (
     "case_state_history",
     "decision_log",
     "ground_truth",
+    "dispute",
+    "hardship_request",
 )
 
 

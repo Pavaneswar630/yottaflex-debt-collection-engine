@@ -10,7 +10,7 @@ from yottaflex_debt_collection.schema_loader import DataDictionary, load_diction
 class SchemaLoaderTests(unittest.TestCase):
     def test_repository_dictionary_validates(self) -> None:
         dictionary = load_dictionary()
-        self.assertEqual(len(dictionary.tables), 14)
+        self.assertEqual(len(dictionary.tables), 16)
         self.assertEqual(dictionary.tables[0].name, "customer")
 
     def test_field_contract_requires_named_dictionary_attributes(self) -> None:

@@ -7,6 +7,10 @@ erDiagram
     LOAN ||--o{ INSTALLMENT : schedules
     LOAN ||--o{ DELINQUENCY_SNAPSHOT : assessed_by
     ACCOUNT ||--o{ CONTACT_PREFERENCE : has_effective_preferences
+    ACCOUNT ||--o{ DISPUTE : records
+    LOAN ||--o{ DISPUTE : concerns
+    ACCOUNT ||--o{ HARDSHIP_REQUEST : requests
+    LOAN ||--o{ HARDSHIP_REQUEST : concerns
     ACCOUNT ||--o{ COLLECTION_CASE : has
     LOAN o|--o{ COLLECTION_CASE : concerns
     COLLECTION_CASE ||--o{ CONTACT_ATTEMPT : records
@@ -30,6 +34,10 @@ In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means z
 | Loan → Installment | 0..N installments | exactly 1 loan | Installments are generated from a loan schedule. |
 | Loan → DelinquencySnapshot | 0..N snapshots | exactly 1 loan | A loan may have no snapshot yet. |
 | Account → ContactPreference | 0..N effective-dated rows | exactly 1 account | An account may have no recorded preference; `effective_from`/`effective_to` preserve history. |
+| Account → Dispute | 0..N disputes | exactly 1 account | A dispute is optional and identifies the affected loan. |
+| Loan → Dispute | 0..N disputes | exactly 1 loan | A loan may have no dispute; dispute lifecycle is retained as a separate record. |
+| Account → HardshipRequest | 0..N requests | exactly 1 account | A hardship request is optional and identifies the affected loan. |
+| Loan → HardshipRequest | 0..N requests | exactly 1 loan | A loan may have no hardship request; status and resolution timestamps record its lifecycle. |
 | Account → CollectionCase | 0..N cases | exactly 1 account | A case always belongs to an account. |
 | Loan → CollectionCase | 0..N historical cases; at most 1 with `status = 'open'` | 0..1 loan | `collection_case.loan_id` is nullable for account-level cases; a partial unique index prevents two open cases for one loan. |
 | CollectionCase → ContactAttempt | 0..N attempts | exactly 1 case | Policy-blocked actions are retained as events, not sent contacts. |
@@ -42,3 +50,5 @@ In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means z
 | Account → Payment | 0..N payments | exactly 1 account | A payment is recorded against one account. |
 
 `ContactPreference` is effective-dated (`effective_from`, optional `effective_to`); changes are stored as new rows rather than overwriting prior preferences. `CaseStateHistory`, `DecisionLog`, `ContactAttempt`, and the reconciliation bridges retain event and allocation history. `schema/schema.sql` is hand-maintained PostgreSQL DDL with explicit primary/foreign keys, enum checks, and foreign-key indexes. The YAML data dictionary records field metadata and relationship references.
+
+The generator’s baseline creates one loan per account and assigns two accounts per customer where scale permits; the schema continues to allow accounts with multiple loans. `Payment.unapplied_amount` records the remainder after oldest-first allocation and is reconciled against the allocation bridge.

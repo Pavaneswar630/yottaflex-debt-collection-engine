@@ -37,6 +37,26 @@ tables:
       unique: false
       validation: Must contain 1 to 120 non-whitespace characters; use synthetic names only.
       sql_check: length(trim(display_name)) BETWEEN 1 AND 120
+    risk_band:
+      name: risk_band
+      type: VARCHAR(12)
+      required: true
+      allowed_values:
+      - low
+      - medium
+      - high
+      - critical
+      unit: none
+      unique: false
+      validation: Must be a synthetic customer risk band.
+    timezone:
+      name: timezone
+      type: VARCHAR(64)
+      required: true
+      allowed_values: []
+      unit: IANA time-zone identifier
+      unique: false
+      validation: Must be a recognized IANA time-zone identifier used for local contact windows.
     preferred_language:
       name: preferred_language
       type: VARCHAR(16)
@@ -825,6 +845,15 @@ tables:
       validation: Must be greater than zero; value is the account currency amount expressed in integer
         cents.
       sql_check: amount > 0
+    unapplied_amount:
+      name: unapplied_amount
+      type: BIGINT
+      required: true
+      allowed_values: []
+      unit: integer cents
+      unique: false
+      validation: Must equal the posted amount less all payment allocations and be between zero and amount.
+      sql_check: unapplied_amount BETWEEN 0 AND amount
     currency:
       name: currency
       type: CHAR(3)
@@ -987,6 +1016,183 @@ tables:
       unit: none
       unique: false
       validation: Must be matched, partial, or excess.
+- name: dispute
+  description: Synthetic dispute record for a customer account and affected loan.
+  fields:
+    dispute_id:
+      name: dispute_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: true
+      validation: Must match DIS-2026- followed by a six-digit zero-padded counter.
+      primary_key: true
+      sql_check: dispute_id ~ '^DIS-2026-[0-9]{6}$'
+    account_id:
+      name: account_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Must reference the affected account.
+      references:
+        table: account
+        field: account_id
+        on_delete: RESTRICT
+    loan_id:
+      name: loan_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Must reference the loan subject to the dispute.
+      references:
+        table: loan
+        field: loan_id
+        on_delete: RESTRICT
+    filed_at:
+      name: filed_at
+      type: TIMESTAMPTZ
+      required: true
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Must not precede the account opening date or exceed the fixed as-of date.
+    reason_code:
+      name: reason_code
+      type: VARCHAR(32)
+      required: true
+      allowed_values:
+      - balance_question
+      - payment_not_posted
+      - identity_question
+      unit: none
+      unique: false
+      validation: Must identify a supported synthetic dispute reason.
+    status:
+      name: status
+      type: VARCHAR(16)
+      required: true
+      allowed_values:
+      - under_review
+      - resolved
+      - withdrawn
+      unit: none
+      unique: false
+      validation: Must be under_review, resolved, or withdrawn.
+    resolved_at:
+      name: resolved_at
+      type: TIMESTAMPTZ
+      required: false
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Required for resolved or withdrawn records and must not precede filed_at.
+    created_at:
+      name: created_at
+      type: TIMESTAMPTZ
+      required: true
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Must use the fixed generation timestamp.
+  constraints:
+  - name: dispute_resolution_state
+    check: (status = 'under_review') = (resolved_at IS NULL)
+  - name: dispute_resolution_order
+    check: resolved_at IS NULL OR resolved_at >= filed_at
+- name: hardship_request
+  description: Synthetic customer hardship request and its review outcome.
+  fields:
+    hardship_request_id:
+      name: hardship_request_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: true
+      validation: Must match HRS-2026- followed by a six-digit zero-padded counter.
+      primary_key: true
+      sql_check: hardship_request_id ~ '^HRS-2026-[0-9]{6}$'
+    account_id:
+      name: account_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Must reference the requesting account.
+      references:
+        table: account
+        field: account_id
+        on_delete: RESTRICT
+    loan_id:
+      name: loan_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Must reference the affected loan.
+      references:
+        table: loan
+        field: loan_id
+        on_delete: RESTRICT
+    requested_at:
+      name: requested_at
+      type: TIMESTAMPTZ
+      required: true
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Must not precede the account opening date or exceed the fixed as-of date.
+    reason_code:
+      name: reason_code
+      type: VARCHAR(24)
+      required: true
+      allowed_values:
+      - income_loss
+      - medical
+      - disaster
+      - other
+      unit: none
+      unique: false
+      validation: Must identify a supported synthetic hardship reason.
+    status:
+      name: status
+      type: VARCHAR(12)
+      required: true
+      allowed_values:
+      - requested
+      - approved
+      - declined
+      unit: none
+      unique: false
+      validation: Must be requested, approved, or declined.
+    resolved_at:
+      name: resolved_at
+      type: TIMESTAMPTZ
+      required: false
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Required for approved or declined records and must not precede requested_at.
+    created_at:
+      name: created_at
+      type: TIMESTAMPTZ
+      required: true
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Must use the fixed generation timestamp.
+  constraints:
+  - name: hardship_resolution_state
+    check: (status = 'requested') = (resolved_at IS NULL)
+  - name: hardship_resolution_order
+    check: resolved_at IS NULL OR resolved_at >= requested_at
 - name: case_state_history
   description: Append-only record of collection case lifecycle transitions.
   fields:

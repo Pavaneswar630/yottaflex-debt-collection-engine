@@ -17,6 +17,8 @@ Synthetic customer or account holder.
 | `customer_id` | `VARCHAR(32)` | Yes | — | none | Yes | PK | Must match CUS- followed by a six-digit zero-padded counter. |
 | `customer_type` | `VARCHAR(16)` | Yes | `individual`, `organization` | none | No | — | Must be individual or organization. |
 | `display_name` | `VARCHAR(120)` | Yes | — | none | No | — | Must contain 1 to 120 non-whitespace characters; use synthetic names only. |
+| `risk_band` | `VARCHAR(12)` | Yes | `low`, `medium`, `high`, `critical` | none | No | — | Must be a synthetic customer risk band. |
+| `timezone` | `VARCHAR(64)` | Yes | — | IANA time-zone identifier | No | — | Must be a recognized IANA time-zone identifier used for local contact windows. |
 | `preferred_language` | `VARCHAR(16)` | No | — | BCP-47 language tag | No | — | When present, must be a syntactically valid language tag. |
 | `created_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
 
@@ -182,6 +184,7 @@ Payment received for an account; installment splits are recorded in payment_allo
 | `received_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
 | `posted_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | When present, must not precede received_at. |
 | `amount` | `BIGINT` | Yes | — | integer cents | No | — | Must be greater than zero; value is the account currency amount expressed in integer cents. |
+| `unapplied_amount` | `BIGINT` | Yes | — | integer cents | No | — | Must equal the posted amount less all payment allocations and be between zero and amount. |
 | `currency` | `CHAR(3)` | Yes | — | ISO 4217 currency code | No | — | Must be an uppercase ISO 4217 alphabetic currency code. |
 | `payment_method` | `VARCHAR(16)` | Yes | `bank_transfer`, `card`, `cash`, `direct_debit`, `other` | none | No | — | Must be bank_transfer, card, cash, direct_debit, or other. |
 | `status` | `VARCHAR(12)` | Yes | `pending`, `posted`, `returned`, `reversed` | none | No | — | Pending payments have no posted_at; posted, returned, or reversed payments must have posted_at. |
@@ -214,6 +217,44 @@ Bridge linking promise-to-pay commitments to one or more payments.
 | `reconciled_amount` | `BIGINT` | Yes | — | integer cents | No | — | Must be greater than zero and not exceed the payment amount. |
 | `reconciled_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
 | `match_status` | `VARCHAR(12)` | Yes | `matched`, `partial`, `excess` | none | No | — | Must be matched, partial, or excess. |
+
+### `dispute`
+
+Synthetic dispute record for a customer account and affected loan.
+
+| Field | Type | Required | Allowed values | Unit | Unique | Key / reference | Validation rule |
+|---|---|---:|---|---|---:|---|---|
+| `dispute_id` | `VARCHAR(32)` | Yes | — | none | Yes | PK | Must match DIS-2026- followed by a six-digit zero-padded counter. |
+| `account_id` | `VARCHAR(32)` | Yes | — | none | No | FK to account.account_id | Must reference the affected account. |
+| `loan_id` | `VARCHAR(32)` | Yes | — | none | No | FK to loan.loan_id | Must reference the loan subject to the dispute. |
+| `filed_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must not precede the account opening date or exceed the fixed as-of date. |
+| `reason_code` | `VARCHAR(32)` | Yes | `balance_question`, `payment_not_posted`, `identity_question` | none | No | — | Must identify a supported synthetic dispute reason. |
+| `status` | `VARCHAR(16)` | Yes | `under_review`, `resolved`, `withdrawn` | none | No | — | Must be under_review, resolved, or withdrawn. |
+| `resolved_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | Required for resolved or withdrawn records and must not precede filed_at. |
+| `created_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must use the fixed generation timestamp. |
+
+**Additional table constraints:**
+- `dispute_resolution_state`: `CHECK ((status = 'under_review') = (resolved_at IS NULL))`.
+- `dispute_resolution_order`: `CHECK (resolved_at IS NULL OR resolved_at >= filed_at)`.
+
+### `hardship_request`
+
+Synthetic customer hardship request and its review outcome.
+
+| Field | Type | Required | Allowed values | Unit | Unique | Key / reference | Validation rule |
+|---|---|---:|---|---|---:|---|---|
+| `hardship_request_id` | `VARCHAR(32)` | Yes | — | none | Yes | PK | Must match HRS-2026- followed by a six-digit zero-padded counter. |
+| `account_id` | `VARCHAR(32)` | Yes | — | none | No | FK to account.account_id | Must reference the requesting account. |
+| `loan_id` | `VARCHAR(32)` | Yes | — | none | No | FK to loan.loan_id | Must reference the affected loan. |
+| `requested_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must not precede the account opening date or exceed the fixed as-of date. |
+| `reason_code` | `VARCHAR(24)` | Yes | `income_loss`, `medical`, `disaster`, `other` | none | No | — | Must identify a supported synthetic hardship reason. |
+| `status` | `VARCHAR(12)` | Yes | `requested`, `approved`, `declined` | none | No | — | Must be requested, approved, or declined. |
+| `resolved_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | Required for approved or declined records and must not precede requested_at. |
+| `created_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must use the fixed generation timestamp. |
+
+**Additional table constraints:**
+- `hardship_resolution_state`: `CHECK ((status = 'requested') = (resolved_at IS NULL))`.
+- `hardship_resolution_order`: `CHECK (resolved_at IS NULL OR resolved_at >= requested_at)`.
 
 ### `case_state_history`
 
