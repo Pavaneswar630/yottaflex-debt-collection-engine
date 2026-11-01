@@ -1,0 +1,748 @@
+schema_version: 1
+title: Yottaflex synthetic debt-collection data model
+sql_dialect: postgresql
+description: >-
+  Canonical schema for synthetic debt-collection records. Generated SQL and
+  documentation must be produced from this file; identifiers and contact
+  details in generated datasets must remain synthetic.
+tables:
+  - name: customer
+    description: Synthetic customer or account holder.
+    fields:
+      customer_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match CUS-2026- followed by a six-digit zero-padded counter.
+        sql_check: customer_id ~ '^CUS-2026-[0-9]{6}$'
+      customer_type:
+        type: VARCHAR(16)
+        required: true
+        enum: [individual, organization]
+        unit: none
+        unique: false
+        validation: Must be individual or organization.
+      display_name:
+        type: VARCHAR(120)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must contain 1 to 120 non-whitespace characters; use synthetic names only.
+        sql_check: length(trim(display_name)) BETWEEN 1 AND 120
+      preferred_language:
+        type: VARCHAR(16)
+        required: false
+        enum: []
+        unit: BCP-47 language tag
+        unique: false
+        validation: When present, must be a syntactically valid language tag.
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+
+  - name: account
+    description: Customer-owned account grouping one or more loans.
+    fields:
+      account_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match ACC-2026- followed by a six-digit zero-padded counter.
+        sql_check: account_id ~ '^ACC-2026-[0-9]{6}$'
+      customer_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing customer.
+        references: {table: customer, field: customer_id, on_delete: RESTRICT}
+      account_status:
+        type: VARCHAR(16)
+        required: true
+        enum: [open, closed]
+        unit: none
+        unique: false
+        validation: Must be open or closed.
+      hardship_status:
+        type: VARCHAR(16)
+        required: true
+        enum: [none, requested, approved, declined]
+        unit: none
+        unique: false
+        validation: Must be none, requested, approved, or declined.
+      opened_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+      closed_at:
+        type: TIMESTAMPTZ
+        required: false
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: When present, must not precede opened_at and account_status must be closed.
+    constraints:
+      - name: account_close_order
+        check: closed_at IS NULL OR closed_at >= opened_at
+      - name: account_status_close_date
+        check: (account_status = 'closed') = (closed_at IS NOT NULL)
+
+  - name: loan
+    description: Loan contract belonging to an account.
+    fields:
+      loan_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match LOAN-2026- followed by a six-digit zero-padded counter.
+        sql_check: loan_id ~ '^LOAN-2026-[0-9]{6}$'
+      account_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing account.
+        references: {table: account, field: account_id, on_delete: RESTRICT}
+      product_type:
+        type: VARCHAR(24)
+        required: true
+        enum: [personal, auto, mortgage, credit_line]
+        unit: none
+        unique: false
+        validation: Must be personal, auto, mortgage, or credit_line.
+      principal_amount:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be greater than zero and use the loan currency's minor-unit precision.
+        sql_check: principal_amount > 0
+      currency:
+        type: CHAR(3)
+        required: true
+        enum: []
+        unit: ISO 4217 currency code
+        unique: false
+        validation: Must be an uppercase ISO 4217 alphabetic currency code.
+        sql_check: currency ~ '^[A-Z]{3}$'
+      annual_interest_rate:
+        type: NUMERIC(7,4)
+        required: true
+        enum: []
+        unit: percent per year
+        unique: false
+        validation: Must be between 0 and 100 inclusive.
+        sql_check: annual_interest_rate BETWEEN 0 AND 100
+      term_months:
+        type: SMALLINT
+        required: true
+        enum: []
+        unit: months
+        unique: false
+        validation: Must be a positive whole number of months.
+        sql_check: term_months > 0
+      origination_date:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must not be in the future relative to the dataset's as-of date.
+      maturity_date:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must be later than origination_date.
+      loan_status:
+        type: VARCHAR(16)
+        required: true
+        enum: [active, paid_off, defaulted, closed]
+        unit: none
+        unique: false
+        validation: Must be active, paid_off, defaulted, or closed.
+      paid_off_date:
+        type: DATE
+        required: false
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: When present, loan_status must be paid_off and date must not precede origination_date.
+    constraints:
+      - name: loan_date_order
+        check: maturity_date > origination_date
+      - name: loan_paid_off_state
+        check: (loan_status = 'paid_off') = (paid_off_date IS NOT NULL)
+      - name: loan_paid_off_date_order
+        check: paid_off_date IS NULL OR paid_off_date >= origination_date
+
+  - name: installment
+    description: Scheduled amount due for one loan payment period.
+    fields:
+      installment_id:
+        type: VARCHAR(64)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match INS-<loan-id>- followed by a three-digit zero-padded sequence.
+        sql_check: installment_id ~ '^INS-LOAN-2026-[0-9]{6}-[0-9]{3}$'
+      loan_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing loan.
+        references: {table: loan, field: loan_id, on_delete: RESTRICT}
+      sequence_number:
+        type: SMALLINT
+        required: true
+        enum: []
+        unit: installment ordinal
+        unique: false
+        validation: Must be a positive integer and match the counter in installment_id.
+        sql_check: sequence_number > 0
+      due_date:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must be on or after the loan origination date.
+      principal_due:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be zero or greater and use the loan currency's minor-unit precision.
+        sql_check: principal_due >= 0
+      interest_due:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be zero or greater and use the loan currency's minor-unit precision.
+        sql_check: interest_due >= 0
+      total_due:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must equal principal_due plus interest_due.
+        sql_check: total_due >= 0 AND total_due = principal_due + interest_due
+      installment_status:
+        type: VARCHAR(20)
+        required: true
+        enum: [scheduled, partially_paid, paid, past_due, waived]
+        unit: none
+        unique: false
+        validation: Must match the reconciled allocations and due date.
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+    constraints:
+      - name: installment_loan_sequence
+        type: unique
+        fields: [loan_id, sequence_number]
+
+  - name: delinquency_snapshot
+    description: Point-in-time delinquency and risk assessment for a loan.
+    fields:
+      snapshot_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match DLS-2026- followed by a six-digit zero-padded counter.
+        sql_check: snapshot_id ~ '^DLS-2026-[0-9]{6}$'
+      loan_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing loan.
+        references: {table: loan, field: loan_id, on_delete: RESTRICT}
+      snapshot_date:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must be the as-of date for all derived values in the snapshot.
+      days_past_due:
+        type: INTEGER
+        required: true
+        enum: []
+        unit: days
+        unique: false
+        validation: Must be zero or greater and derived from the oldest unpaid installment due date.
+        sql_check: days_past_due >= 0
+      arrears_amount:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must equal unpaid installment amounts as of snapshot_date and be zero or greater.
+        sql_check: arrears_amount >= 0
+      risk_score:
+        type: NUMERIC(5,2)
+        required: true
+        enum: []
+        unit: points on a 0-100 scale
+        unique: false
+        validation: Must be between 0 and 100 inclusive.
+        sql_check: risk_score BETWEEN 0 AND 100
+      risk_band:
+        type: VARCHAR(12)
+        required: true
+        enum: [low, medium, high, critical]
+        unit: none
+        unique: false
+        validation: Must be low, medium, high, or critical and consistent with risk_score.
+      dispute_status:
+        type: VARCHAR(16)
+        required: true
+        enum: [not_disputed, disputed, under_review, resolved]
+        unit: none
+        unique: false
+        validation: Must be not_disputed, disputed, under_review, or resolved.
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+    constraints:
+      - name: snapshot_loan_date
+        type: unique
+        fields: [loan_id, snapshot_date]
+
+  - name: contact_preference
+    description: Effective-dated contact channel and permissible local contact window.
+    fields:
+      contact_preference_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match CPF-2026- followed by a six-digit zero-padded counter.
+        sql_check: contact_preference_id ~ '^CPF-2026-[0-9]{6}$'
+      account_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing account.
+        references: {table: account, field: account_id, on_delete: RESTRICT}
+      preferred_channel:
+        type: VARCHAR(12)
+        required: true
+        enum: [phone, email, sms, postal]
+        unit: none
+        unique: false
+        validation: Must be phone, email, sms, or postal.
+      timezone:
+        type: VARCHAR(64)
+        required: true
+        enum: []
+        unit: IANA time-zone identifier
+        unique: false
+        validation: Must be a recognized IANA time-zone identifier.
+      allowed_start_time:
+        type: TIME
+        required: true
+        enum: []
+        unit: local time
+        unique: false
+        validation: Must be earlier than allowed_end_time and within the permitted local contact window.
+      allowed_end_time:
+        type: TIME
+        required: true
+        enum: []
+        unit: local time
+        unique: false
+        validation: Must be later than allowed_start_time and within the permitted local contact window.
+      do_not_contact:
+        type: BOOLEAN
+        required: true
+        enum: []
+        unit: boolean
+        unique: false
+        validation: When true, no outbound contact may be scheduled.
+      effective_from:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must be on or before effective_to when effective_to is present.
+      effective_to:
+        type: DATE
+        required: false
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: When present, must be on or after effective_from.
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+    constraints:
+      - name: contact_window_order
+        check: allowed_start_time < allowed_end_time
+      - name: contact_preference_effective_order
+        check: effective_to IS NULL OR effective_to >= effective_from
+      - name: contact_preference_account_start
+        type: unique
+        fields: [account_id, effective_from]
+
+  - name: collection_case
+    description: Explainable collection work item for an account and optionally one loan.
+    fields:
+      case_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match COL-2026- followed by a six-digit zero-padded counter.
+        sql_check: case_id ~ '^COL-2026-[0-9]{6}$'
+      account_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing account.
+        references: {table: account, field: account_id, on_delete: RESTRICT}
+      loan_id:
+        type: VARCHAR(32)
+        required: false
+        enum: []
+        unit: none
+        unique: false
+        validation: When present, must reference a loan owned by account_id.
+        references: {table: loan, field: loan_id, on_delete: RESTRICT}
+      status:
+        type: VARCHAR(16)
+        required: true
+        enum: [open, paused, resolved, closed]
+        unit: none
+        unique: false
+        validation: Must be open, paused, resolved, or closed.
+      opened_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+      closed_at:
+        type: TIMESTAMPTZ
+        required: false
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: When present, must not precede opened_at and status must be resolved or closed.
+      priority_score:
+        type: NUMERIC(5,2)
+        required: true
+        enum: []
+        unit: points on a 0-100 scale
+        unique: false
+        validation: Must be between 0 and 100 inclusive and derived from documented case inputs.
+        sql_check: priority_score BETWEEN 0 AND 100
+      next_action_at:
+        type: TIMESTAMPTZ
+        required: false
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: When present, must respect contact preferences and applicable restrictions.
+    constraints:
+      - name: collection_case_close_order
+        check: closed_at IS NULL OR closed_at >= opened_at
+      - name: collection_case_status_close_date
+        check: (status IN ('resolved', 'closed')) = (closed_at IS NOT NULL)
+
+  - name: contact_attempt
+    description: Immutable record of an attempted or policy-blocked contact action.
+    fields:
+      contact_attempt_id:
+        type: VARCHAR(64)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match CTP-<case-id>- followed by a three-digit zero-padded sequence.
+        sql_check: contact_attempt_id ~ '^CTP-COL-2026-[0-9]{6}-[0-9]{3}$'
+      case_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing collection case.
+        references: {table: collection_case, field: case_id, on_delete: RESTRICT}
+      attempted_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be within the applicable contact preference window unless outcome is policy_blocked.
+      channel:
+        type: VARCHAR(12)
+        required: true
+        enum: [phone, email, sms, postal]
+        unit: none
+        unique: false
+        validation: Must be phone, email, sms, or postal and permitted by the active preference.
+      outcome:
+        type: VARCHAR(20)
+        required: true
+        enum: [connected, no_answer, voicemail, invalid_contact, refused, dispute_raised, policy_blocked]
+        unit: none
+        unique: false
+        validation: Must be a listed outcome; policy_blocked records a prevented action, not a sent contact.
+      agent_id:
+        type: VARCHAR(64)
+        required: false
+        enum: []
+        unit: none
+        unique: false
+        validation: When present, must identify an authorized synthetic operator.
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+
+  - name: promise_to_pay
+    description: Customer payment commitment recorded against a collection case.
+    fields:
+      promise_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match PTP-2026- followed by a six-digit zero-padded counter.
+        sql_check: promise_id ~ '^PTP-2026-[0-9]{6}$'
+      case_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference an existing collection case.
+        references: {table: collection_case, field: case_id, on_delete: RESTRICT}
+      promised_amount:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be greater than zero and not exceed the case's verified arrears.
+        sql_check: promised_amount > 0
+      promised_date:
+        type: DATE
+        required: true
+        enum: []
+        unit: calendar date
+        unique: false
+        validation: Must be on or after recorded_at's calendar date.
+      status:
+        type: VARCHAR(12)
+        required: true
+        enum: [pending, kept, broken, cancelled]
+        unit: none
+        unique: false
+        validation: Must match subsequent reconciled payments and the promise lifecycle.
+      recorded_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+      resolved_at:
+        type: TIMESTAMPTZ
+        required: false
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Required when status is kept, broken, or cancelled; must not precede recorded_at.
+    constraints:
+      - name: promise_resolved_state
+        check: (status = 'pending') = (resolved_at IS NULL)
+      - name: promise_resolved_order
+        check: resolved_at IS NULL OR resolved_at >= recorded_at
+
+  - name: payment
+    description: Payment received for an account; installment splits are recorded in payment_allocation.
+    fields:
+      payment_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: true
+        primary_key: true
+        validation: Must match PMT-2026- followed by a six-digit zero-padded counter.
+        sql_check: payment_id ~ '^PMT-2026-[0-9]{6}$'
+      account_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        validation: Must reference the account that made the payment.
+        references: {table: account, field: account_id, on_delete: RESTRICT}
+      received_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+      posted_at:
+        type: TIMESTAMPTZ
+        required: false
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: When present, must not precede received_at.
+      amount:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be greater than zero and use the account currency's minor-unit precision.
+        sql_check: amount > 0
+      currency:
+        type: CHAR(3)
+        required: true
+        enum: []
+        unit: ISO 4217 currency code
+        unique: false
+        validation: Must be an uppercase ISO 4217 alphabetic currency code.
+        sql_check: currency ~ '^[A-Z]{3}$'
+      payment_method:
+        type: VARCHAR(16)
+        required: true
+        enum: [bank_transfer, card, cash, direct_debit, other]
+        unit: none
+        unique: false
+        validation: Must be bank_transfer, card, cash, direct_debit, or other.
+      status:
+        type: VARCHAR(12)
+        required: true
+        enum: [pending, posted, returned, reversed]
+        unit: none
+        unique: false
+        validation: Pending payments have no posted_at; posted, returned, or reversed payments must have posted_at.
+      external_reference:
+        type: VARCHAR(80)
+        required: false
+        enum: []
+        unit: none
+        unique: true
+        validation: When present, must be unique and contain no sensitive payment credentials.
+        sql_check: external_reference IS NULL OR length(trim(external_reference)) > 0
+      created_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
+    constraints:
+      - name: payment_posted_order
+        check: posted_at IS NULL OR posted_at >= received_at
+      - name: payment_posted_state
+        check: (status = 'pending') = (posted_at IS NULL)
+
+  - name: payment_allocation
+    description: Bridge assigning a payment, wholly or partially, to a loan installment.
+    fields:
+      payment_id:
+        type: VARCHAR(32)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        primary_key: true
+        validation: Must reference an existing payment and be its first part of the composite primary key.
+        references: {table: payment, field: payment_id, on_delete: RESTRICT}
+      installment_id:
+        type: VARCHAR(64)
+        required: true
+        enum: []
+        unit: none
+        unique: false
+        primary_key: true
+        validation: Must reference an existing installment and be its second part of the composite primary key.
+        references: {table: installment, field: installment_id, on_delete: RESTRICT}
+      allocated_amount:
+        type: NUMERIC(14,2)
+        required: true
+        enum: []
+        unit: currency amount
+        unique: false
+        validation: Must be greater than zero; summed allocations must not exceed the posted payment amount.
+        sql_check: allocated_amount > 0
+      allocated_at:
+        type: TIMESTAMPTZ
+        required: true
+        enum: []
+        unit: UTC timestamp
+        unique: false
+        validation: Must be a valid timestamp with timezone.
