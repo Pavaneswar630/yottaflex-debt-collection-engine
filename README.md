@@ -39,8 +39,9 @@ The fixed-seed, parameterized generator and CSV/JSON/SQL exports described in th
 ## Project layout
 
 - `src/yottaflex_debt_collection/`: package entry point and planned domain modules for models, generation, prioritization, contact policy, payment reconciliation, and validation.
-- `tests/`: local tests; currently contains only a scaffold smoke test.
+- `tests/`: local tests for the CLI scaffold, schema generation, and policy configuration.
 - `schema/data_dictionary.yaml`: canonical entity, field, validation, and relationship definitions.
+- `config/policy.yaml`: configurable example defaults for contact windows and attempt limits, payment allocation, case scoring, DPD buckets, and dispute/hardship holds. Review against applicable requirements before production use.
 - `schema/schema.sql`: generated PostgreSQL table definitions.
 - `docs/DATA_DICTIONARY.md`, `docs/ER_DIAGRAM.md`: generated field reference and Mermaid ER diagram.
 - `tools/generate_schema.py`: generator and staleness check for the schema artifacts.

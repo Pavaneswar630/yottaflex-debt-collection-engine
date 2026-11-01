@@ -11,7 +11,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 
 | ID | Brief requirement | Code target | Test target | Documentation target | Status |
 |---|---|---|---|---|---|
-| B01 | Prioritize overdue accounts, schedule contact tasks, and monitor commitments without aggressive or unlawful practices. | `prioritization.py`, `contacts.py`, `reconciliation.py` | `test_prioritization.py`, `test_contact_policy.py`, `test_reconciliation.py` | README; `docs/DATA_DICTIONARY.md` | Planned |
+| B01 | Prioritize overdue accounts, schedule contact tasks, and monitor commitments without aggressive or unlawful practices. | `config/policy.yaml`, `prioritization.py`, `contacts.py`, `reconciliation.py` | `test_policy_config.py`, `test_prioritization.py`, `test_contact_policy.py`, `test_reconciliation.py` | README; `docs/DATA_DICTIONARY.md` | Example policy defaults defined; runtime enforcement planned |
 | B02 | Build an end-to-end workflow for prioritization, compliant contact scheduling, and commitment monitoring. | `generator.py`, `prioritization.py`, `contacts.py`, `reconciliation.py` | `test_workflow.py` | README; `docs/ARCHITECTURE.md` | Planned |
 | B03 | Expose key decisions and exceptions, preserve traceability, and produce measurable outputs. | `models.py`, `prioritization.py`, `validation.py` | `test_decision_traceability.py`, `test_metrics.py` | `docs/ARCHITECTURE.md`; `docs/VALIDATION.md` | Planned |
 | B04 | Medium complexity requires related entities, conditional rules, an exception path, and meaningful evaluation metrics. | All domain modules | `test_workflow.py`, `test_exceptions.py`, `test_metrics.py` | `docs/ARCHITECTURE.md`; `docs/VALIDATION.md` | Planned |
@@ -26,8 +26,8 @@ This matrix maps every requirement statement and list item in the supplied brief
 | W03 | Create loan schedules and installment due dates. | `generator.py` | `test_schedule_generation.py` | `docs/DATA_DICTIONARY.md` | Planned |
 | W04 | Generate payment histories. | `generator.py`, `reconciliation.py` | `test_payment_history.py` | `docs/ARCHITECTURE.md` | Planned |
 | W05 | Derive days-past-due and arrears. | `generator.py`, `models.py` | `test_delinquency_calculations.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| W06 | Create contact preferences and permissible contact windows. | `contacts.py`, `generator.py` | `test_contact_policy.py` | `docs/DATA_DICTIONARY.md` | Planned |
-| W07 | Score cases from balance, age, and risk. | `prioritization.py` | `test_prioritization.py` | `docs/ARCHITECTURE.md` | Planned |
+| W06 | Create contact preferences and permissible contact windows. | `config/policy.yaml`, `contacts.py`, `generator.py` | `test_policy_config.py`, `test_contact_policy.py` | `docs/DATA_DICTIONARY.md`, README | Example windows and weekly attempt cap defined; runtime enforcement planned |
+| W07 | Score cases from balance, age, and risk. | `config/policy.yaml`, `prioritization.py` | `test_policy_config.py`, `test_prioritization.py` | `docs/ARCHITECTURE.md` | Example weights and DPD buckets defined; runtime scoring planned |
 | W08 | Record contact outcomes and promises. | `contacts.py`, `models.py` | `test_contact_events.py`, `test_promise_lifecycle.py` | `docs/DATA_DICTIONARY.md` | Planned |
 | W09 | Reconcile payments to commitments. | `reconciliation.py` | `test_reconciliation.py` | `docs/VALIDATION.md` | Planned |
 | W10 | Persist state changes as explicit records/events where relevant; do not overwrite history. | `models.py`, `contacts.py`, `reconciliation.py` | `test_event_history.py` | `docs/ARCHITECTURE.md` | Planned |
@@ -78,7 +78,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 | V07 | Validate duplicate checks. | `validation.py` | `test_duplicates.py` | `docs/VALIDATION.md` | Planned |
 | V08 | Ensure arrears calculations reconcile. | `reconciliation.py`, `validation.py` | `test_delinquency_calculations.py` | `docs/VALIDATION.md` | Planned |
 | V09 | Make prioritization explainable. | `prioritization.py` | `test_prioritization.py` | `docs/ARCHITECTURE.md` | Planned |
-| V10 | Enforce contact restrictions. | `contacts.py`, `validation.py` | `test_contact_policy.py` | `docs/VALIDATION.md` | Planned |
+| V10 | Enforce contact restrictions. | `config/policy.yaml`, `contacts.py`, `validation.py` | `test_policy_config.py`, `test_contact_policy.py` | `docs/VALIDATION.md` | Dispute and hardship hold defaults defined; runtime enforcement planned |
 | V11 | Make promise outcomes match subsequent payments. | `reconciliation.py` | `test_reconciliation.py`, `test_promise_lifecycle.py` | `docs/VALIDATION.md` | Planned |
 | V12 | Evaluate realistic distributions and meaningful variation. | `generator.py`, `validation.py` | `test_distribution_metrics.py` | `docs/VALIDATION.md` | Planned |
 | V13 | Evaluate consistent IDs and valid joins. | `generator.py`, `validation.py` | `test_id_conventions.py`, `test_foreign_keys.py` | `docs/VALIDATION.md` | Planned |

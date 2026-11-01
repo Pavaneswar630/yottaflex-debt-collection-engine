@@ -1,0 +1,89 @@
+policy_version: 1
+description: >-
+  Example, configurable policy defaults for the synthetic debt-collection
+  workflow. Review and adapt contact windows, attempt limits, and hold behavior
+  for applicable law and approved organizational policy before production use.
+
+contact:
+  timezone_source: contact_preference.timezone
+  windows:
+    weekdays:
+      days: [monday, tuesday, wednesday, thursday, friday]
+      start_local: "09:00"
+      end_local: "18:00"
+    weekends:
+      days: [saturday, sunday]
+      allowed: false
+  max_attempts_per_week:
+    count: 3
+    period_days: 7
+    scope: account
+    rolling_period: true
+    count_only_sent_attempts: true
+    excluded_outcomes: [policy_blocked]
+
+payment_allocation:
+  rule: oldest_due_first
+  eligible_payment_statuses: [posted]
+  allow_partial_allocation: true
+  tie_breakers: [due_date, loan_id, sequence_number]
+  constraints:
+    - Do not allocate more than the payment's unallocated balance.
+    - Do not allocate more than the installment's outstanding balance.
+    - Reject allocations when payment and installment currencies differ.
+
+scoring:
+  scale:
+    minimum: 0
+    maximum: 100
+  weights:
+    arrears_amount: 0.40
+    dpd_bucket: 0.35
+    risk_score: 0.25
+  components:
+    arrears_amount:
+      normalization: min(arrears_amount / original_principal, 1) * 100
+    dpd_bucket:
+      normalization: score from the matching DPD bucket below
+    risk_score:
+      normalization: delinquency_snapshot.risk_score (already on a 0-100 scale)
+  formula: >-
+    weighted sum of the normalized arrears_amount, dpd_bucket, and risk_score
+    components, clamped to the configured 0-100 scale
+
+dpd_buckets:
+  - name: current
+    min_days: 0
+    max_days: 0
+    score: 0
+  - name: 1_30_days
+    min_days: 1
+    max_days: 30
+    score: 25
+  - name: 31_60_days
+    min_days: 31
+    max_days: 60
+    score: 50
+  - name: 61_90_days
+    min_days: 61
+    max_days: 90
+    score: 75
+  - name: over_90_days
+    min_days: 91
+    max_days: null
+    score: 100
+
+holds:
+  dispute:
+    source: delinquency_snapshot.dispute_status
+    statuses: [disputed, under_review]
+    pause_outbound_contact: true
+    pause_automated_escalation: true
+    release_statuses: [resolved, not_disputed]
+  hardship:
+    source: account.hardship_status
+    statuses: [requested, approved]
+    pause_outbound_contact: true
+    pause_automated_escalation: true
+    release_statuses: [declined, none]
+    approved_arrangement_requires_review_to_release: true
