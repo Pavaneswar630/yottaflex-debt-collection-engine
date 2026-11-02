@@ -4,6 +4,8 @@ import csv
 import hashlib
 import unittest
 from collections import Counter
+from calendar import monthrange
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -14,6 +16,49 @@ from yottaflex_debt_collection.generator import (
 )
 from yottaflex_debt_collection.schema_loader import load_dictionary
 from yottaflex_debt_collection.settings import AS_OF_DATE
+
+
+def _reference_delinquency(
+    loan_id: str,
+    as_of_date: date,
+    installments: list[dict[str, str | int | bool | None]],
+    allocations: list[dict[str, str | int | bool | None]],
+    payments: list[dict[str, str | int | bool | None]],
+) -> tuple[int, int]:
+    """Deliberately slow, loop-based oracle independent of generator helpers."""
+    arrears = 0
+    oldest_unpaid_due_date: date | None = None
+    for installment in installments:
+        if installment["loan_id"] != loan_id:
+            continue
+        due_date = date.fromisoformat(str(installment["due_date"]))
+        if due_date > as_of_date:
+            continue
+        paid = 0
+        for allocation in allocations:
+            if allocation["installment_id"] != installment["installment_id"]:
+                continue
+            for payment in payments:
+                if payment["payment_id"] != allocation["payment_id"]:
+                    continue
+                if payment["status"] != "posted" or payment["posted_at"] is None:
+                    continue
+                posted_date = date.fromisoformat(str(payment["posted_at"])[:10])
+                if posted_date <= as_of_date:
+                    paid += int(allocation["allocated_amount"])
+                break
+        unpaid = max(0, int(installment["total_due"]) - paid)
+        arrears += unpaid
+        if unpaid and (
+            oldest_unpaid_due_date is None or due_date < oldest_unpaid_due_date
+        ):
+            oldest_unpaid_due_date = due_date
+    dpd = (
+        (as_of_date - oldest_unpaid_due_date).days
+        if oldest_unpaid_due_date is not None
+        else 0
+    )
+    return arrears, dpd
 
 
 class GeneratorTests(unittest.TestCase):
@@ -172,6 +217,81 @@ class GeneratorTests(unittest.TestCase):
             if due_dates:
                 self.assertEqual(due_dates, sorted(due_dates))
         self.assertGreater(unapplied_total, 0)
+
+    def test_snapshots_match_slow_reference_and_cover_required_dates(self) -> None:
+        dataset = generate_dataset(80, 204)
+        loans = {str(row["loan_id"]): row for row in dataset["loan"]}
+        installments = dataset["installment"]
+        allocations = dataset["payment_allocation"]
+        payments = dataset["payment"]
+        snapshots = dataset["delinquency_snapshot"]
+        self.assertTrue(snapshots)
+
+        snapshots_by_loan: dict[
+            str, list[dict[str, str | int | bool | None]]
+        ] = {}
+        for snapshot in snapshots:
+            loan_id = str(snapshot["loan_id"])
+            snapshots_by_loan.setdefault(loan_id, []).append(snapshot)
+            snapshot_date = date.fromisoformat(str(snapshot["snapshot_date"]))
+            expected_arrears, expected_dpd = _reference_delinquency(
+                loan_id, snapshot_date, installments, allocations, payments
+            )
+            self.assertEqual(int(snapshot["arrears_amount"]), expected_arrears)
+            self.assertEqual(int(snapshot["days_past_due"]), expected_dpd)
+
+        saw_case_open = False
+        for loan_id, loan in loans.items():
+            rows = snapshots_by_loan[loan_id]
+            actual_reasons = {
+                (str(row["snapshot_date"]), str(row["snapshot_reason"]))
+                for row in rows
+            }
+            origination = date.fromisoformat(str(loan["origination_date"]))
+            month = date(origination.year, origination.month, 1)
+            while month <= AS_OF_DATE:
+                end_of_month = date(
+                    month.year,
+                    month.month,
+                    monthrange(month.year, month.month)[1],
+                )
+                if origination <= end_of_month <= AS_OF_DATE:
+                    self.assertIn((end_of_month.isoformat(), "month_end"), actual_reasons)
+                month_index = month.month
+                year = month.year + (month_index // 12)
+                month = date(year, month_index % 12 + 1, 1)
+
+            self.assertIn((AS_OF_DATE.isoformat(), "as_of"), actual_reasons)
+            due_dates = sorted(
+                date.fromisoformat(str(row["due_date"]))
+                for row in installments
+                if row["loan_id"] == loan_id
+                and date.fromisoformat(str(row["due_date"])) <= AS_OF_DATE
+            )
+            expected_case_open = next(
+                (
+                    due_date
+                    for due_date in due_dates
+                    if _reference_delinquency(
+                        loan_id, due_date, installments, allocations, payments
+                    )[0]
+                    > 0
+                ),
+                None,
+            )
+            case_open_snapshots = [
+                row for row in rows if row["snapshot_reason"] == "case_open"
+            ]
+            if expected_case_open is None:
+                self.assertEqual(case_open_snapshots, [])
+            else:
+                saw_case_open = True
+                self.assertEqual(len(case_open_snapshots), 1)
+                self.assertEqual(
+                    case_open_snapshots[0]["snapshot_date"],
+                    expected_case_open.isoformat(),
+                )
+        self.assertTrue(saw_case_open)
 
     def test_invalid_scale_is_rejected(self) -> None:
         for invalid in (0, -1, True):
