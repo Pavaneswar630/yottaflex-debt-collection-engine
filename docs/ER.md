@@ -32,7 +32,7 @@ In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means z
 | Customer → Account | 0..N accounts | exactly 1 customer | An account cannot exist without its customer. |
 | Account → Loan | 0..N loans | exactly 1 account | A loan cannot exist without its account. |
 | Loan → Installment | 0..N installments | exactly 1 loan | Installments are generated from a loan schedule. |
-| Loan → DelinquencySnapshot | 0..N snapshots | exactly 1 loan | A loan may have no snapshot yet. |
+| Loan → DelinquencySnapshot | 0..N snapshots | exactly 1 loan | Append-only month-end, first-delinquency case-open, and fixed as-of records; uniqueness is per loan/date/reason so coincident triggers are retained. |
 | Account → ContactPreference | 0..N effective-dated rows | exactly 1 account | An account may have no recorded preference; `effective_from`/`effective_to` preserve history. |
 | Account → Dispute | 0..N disputes | exactly 1 account | A dispute is optional and identifies the affected loan. |
 | Loan → Dispute | 0..N disputes | exactly 1 loan | A loan may have no dispute; dispute lifecycle is retained as a separate record. |

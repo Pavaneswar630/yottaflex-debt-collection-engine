@@ -89,7 +89,8 @@ Point-in-time delinquency and risk assessment for a loan.
 |---|---|---:|---|---|---:|---|---|
 | `snapshot_id` | `VARCHAR(32)` | Yes | — | none | Yes | PK | Must match DLS-2026- followed by a six-digit zero-padded counter. |
 | `loan_id` | `VARCHAR(32)` | Yes | — | none | No | FK to loan.loan_id | Must reference an existing loan. |
-| `snapshot_date` | `DATE` | Yes | — | calendar date | No | — | Must be the as-of date for all derived values in the snapshot. |
+| `snapshot_date` | `DATE` | Yes | — | calendar date | No | — | Date for which arrears and days-past-due are calculated; must not exceed the fixed as-of date. |
+| `snapshot_reason` | `VARCHAR(12)` | Yes | `month_end`, `case_open`, `as_of` | none | No | — | Must identify a month-end, first-delinquency case-open, or fixed as-of snapshot. |
 | `days_past_due` | `INTEGER` | Yes | — | days | No | — | Must be zero or greater and derived from the oldest unpaid installment due date. |
 | `arrears_amount` | `BIGINT` | Yes | — | integer cents | No | — | Must equal unpaid installment amounts as of snapshot_date, expressed in integer cents, and be zero or greater. |
 | `risk_score` | `NUMERIC(5,2)` | Yes | — | points on a 0-100 scale | No | — | Must be between 0 and 100 inclusive. |
@@ -98,7 +99,7 @@ Point-in-time delinquency and risk assessment for a loan.
 | `created_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
 
 **Additional table constraints:**
-- `snapshot_loan_date`: unique across `loan_id, snapshot_date`.
+- `snapshot_loan_date_reason`: unique across `loan_id, snapshot_date, snapshot_reason`.
 
 ### `contact_preference`
 

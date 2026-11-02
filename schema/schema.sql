@@ -84,6 +84,7 @@ CREATE TABLE delinquency_snapshot (
     snapshot_id VARCHAR(32) NOT NULL,
     loan_id VARCHAR(32) NOT NULL,
     snapshot_date DATE NOT NULL,
+    snapshot_reason VARCHAR(12) NOT NULL,
     days_past_due INTEGER NOT NULL,
     arrears_amount BIGINT NOT NULL,
     risk_score NUMERIC(5,2) NOT NULL,
@@ -93,12 +94,13 @@ CREATE TABLE delinquency_snapshot (
     CONSTRAINT delinquency_snapshot_pkey PRIMARY KEY (snapshot_id),
     CONSTRAINT delinquency_snapshot_snapshot_id_check CHECK (snapshot_id ~ '^DLS-2026-[0-9]{6}$'),
     CONSTRAINT delinquency_snapshot_loan_id_fkey FOREIGN KEY (loan_id) REFERENCES loan (loan_id) ON DELETE RESTRICT,
+    CONSTRAINT delinquency_snapshot_reason_enum CHECK (snapshot_reason IN ('month_end', 'case_open', 'as_of')),
     CONSTRAINT delinquency_snapshot_days_past_due_check CHECK (days_past_due >= 0),
     CONSTRAINT delinquency_snapshot_arrears_amount_check CHECK (arrears_amount >= 0),
     CONSTRAINT delinquency_snapshot_risk_score_check CHECK (risk_score BETWEEN 0 AND 100),
     CONSTRAINT delinquency_snapshot_risk_band_enum CHECK (risk_band IN ('low', 'medium', 'high', 'critical')),
     CONSTRAINT delinquency_snapshot_dispute_status_enum CHECK (dispute_status IN ('not_disputed', 'disputed', 'under_review', 'resolved')),
-    CONSTRAINT snapshot_loan_date UNIQUE (loan_id, snapshot_date)
+    CONSTRAINT snapshot_loan_date_reason UNIQUE (loan_id, snapshot_date, snapshot_reason)
 );
 
 CREATE TABLE contact_preference (

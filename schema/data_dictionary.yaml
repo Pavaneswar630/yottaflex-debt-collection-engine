@@ -385,7 +385,18 @@ tables:
       allowed_values: []
       unit: calendar date
       unique: false
-      validation: Must be the as-of date for all derived values in the snapshot.
+      validation: Date for which arrears and days-past-due are calculated; must not exceed the fixed as-of date.
+    snapshot_reason:
+      name: snapshot_reason
+      type: VARCHAR(12)
+      required: true
+      allowed_values:
+      - month_end
+      - case_open
+      - as_of
+      unit: none
+      unique: false
+      validation: Must identify a month-end, first-delinquency case-open, or fixed as-of snapshot.
     days_past_due:
       name: days_past_due
       type: INTEGER
@@ -447,11 +458,12 @@ tables:
       unique: false
       validation: Must be a valid timestamp with timezone.
   constraints:
-  - name: snapshot_loan_date
+  - name: snapshot_loan_date_reason
     type: unique
     fields:
     - loan_id
     - snapshot_date
+    - snapshot_reason
 - name: contact_preference
   description: Effective-dated contact channel and permissible local contact window.
   fields:

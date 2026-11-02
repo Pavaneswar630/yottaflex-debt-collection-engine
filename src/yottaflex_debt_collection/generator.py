@@ -43,6 +43,8 @@ TIMEZONES = (
 )
 RISK_BANDS = ("low", "medium", "high", "critical")
 RISK_WEIGHTS = (0.40, 0.35, 0.20, 0.05)
+RISK_SCORE_BY_BAND = {"low": 20, "medium": 45, "high": 70, "critical": 90}
+SNAPSHOT_REASONS = ("month_end", "case_open", "as_of")
 UTC_GENERATED_AT = f"{GENERATION_DATE.isoformat()}T12:00:00+00:00"
 CSV_COLUMNS: dict[str, tuple[str, ...]] = {
     "customer": (
@@ -84,6 +86,18 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "interest_due",
         "total_due",
         "installment_status",
+        "created_at",
+    ),
+    "delinquency_snapshot": (
+        "snapshot_id",
+        "loan_id",
+        "snapshot_date",
+        "snapshot_reason",
+        "days_past_due",
+        "arrears_amount",
+        "risk_score",
+        "risk_band",
+        "dispute_status",
         "created_at",
     ),
     "contact_preference": (
@@ -145,6 +159,17 @@ def _add_months(value: date, months: int) -> date:
     year = value.year + month_index // 12
     month = month_index % 12 + 1
     return date(year, month, min(value.day, monthrange(year, month)[1]))
+
+
+def _month_end_dates(start: date, end: date) -> list[date]:
+    dates: list[date] = []
+    month = date(start.year, start.month, 1)
+    while month <= end:
+        month_end = date(month.year, month.month, monthrange(month.year, month.month)[1])
+        if start <= month_end <= end:
+            dates.append(month_end)
+        month = _add_months(month, 1)
+    return dates
 
 
 def _random_date(rng: Generator, start: date, end: date) -> date:
@@ -214,6 +239,46 @@ def _payment_events(
             payment_amount = amount * int(rng.integers(60, 81)) // 100
         events.append((received_date, max(payment_amount, 1)))
     return events
+
+
+def calculate_delinquency(
+    installments: list[Row],
+    allocations: list[Row],
+    payments: list[Row],
+    as_of_date: date,
+) -> tuple[int, int]:
+    """Return arrears cents and DPD from posted allocations due by ``as_of_date``."""
+    payment_dates = {
+        str(payment["payment_id"]): date.fromisoformat(str(payment["posted_at"])[:10])
+        for payment in payments
+        if payment["status"] == "posted" and payment["posted_at"] is not None
+    }
+    arrears = 0
+    oldest_unpaid_due_date: date | None = None
+    for installment in installments:
+        due_date = date.fromisoformat(str(installment["due_date"]))
+        if due_date > as_of_date:
+            continue
+        paid = sum(
+            int(allocation["allocated_amount"])
+            for allocation in allocations
+            if allocation["installment_id"] == installment["installment_id"]
+            and str(allocation["payment_id"]) in payment_dates
+            and payment_dates[str(allocation["payment_id"])] <= as_of_date
+        )
+        unpaid = max(0, int(installment["total_due"]) - paid)
+        arrears += unpaid
+        if unpaid and (
+            oldest_unpaid_due_date is None or due_date < oldest_unpaid_due_date
+        ):
+            oldest_unpaid_due_date = due_date
+    dpd = (
+        (as_of_date - oldest_unpaid_due_date).days
+        if oldest_unpaid_due_date is not None
+        else 0
+    )
+    return arrears, dpd
+
 
 
 def generate_dataset(
@@ -516,11 +581,100 @@ def generate_dataset(
             loan["loan_status"] = "paid_off"
             loan["paid_off_date"] = last_payment_by_loan[loan_id].isoformat()
 
+    customers_by_id = {str(row["customer_id"]): row for row in customers}
+    disputes_by_loan: dict[str, list[Row]] = {}
+    for dispute in disputes:
+        disputes_by_loan.setdefault(str(dispute["loan_id"]), []).append(dispute)
+    payments_by_account: dict[str, list[Row]] = {}
+    for payment in payments:
+        payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
+    loan_by_installment = {
+        str(installment["installment_id"]): str(installment["loan_id"])
+        for installment in installments
+    }
+    allocations_by_loan: dict[str, list[Row]] = {}
+    for allocation in allocations:
+        loan_id = loan_by_installment[str(allocation["installment_id"])]
+        allocations_by_loan.setdefault(loan_id, []).append(allocation)
+
+    delinquency_snapshots: list[Row] = []
+    for loan in loans_rows:
+        loan_id = str(loan["loan_id"])
+        account_id = str(loan["account_id"])
+        loan_installments = installments_by_loan[loan_id]
+        loan_payments = payments_by_account.get(account_id, [])
+        loan_allocations = allocations_by_loan.get(loan_id, [])
+        snapshot_reasons: dict[date, set[str]] = {}
+        for month_end in _month_end_dates(
+            date.fromisoformat(str(loan["origination_date"])), AS_OF_DATE
+        ):
+            snapshot_reasons.setdefault(month_end, set()).add("month_end")
+        for installment in sorted(
+            loan_installments, key=lambda row: str(row["due_date"])
+        ):
+            due_date = date.fromisoformat(str(installment["due_date"]))
+            if due_date > AS_OF_DATE:
+                continue
+            arrears_on_due_date, _ = calculate_delinquency(
+                loan_installments,
+                loan_allocations,
+                loan_payments,
+                due_date,
+            )
+            if arrears_on_due_date > 0:
+                snapshot_reasons.setdefault(due_date, set()).add("case_open")
+                break
+        snapshot_reasons.setdefault(AS_OF_DATE, set()).add("as_of")
+        customer_id = account_customer[account_id]
+        customer_risk_band = str(customers_by_id[customer_id]["risk_band"])
+        risk_score = RISK_SCORE_BY_BAND[customer_risk_band]
+        for snapshot_date in sorted(snapshot_reasons):
+            arrears_amount, days_past_due = calculate_delinquency(
+                loan_installments,
+                loan_allocations,
+                loan_payments,
+                snapshot_date,
+            )
+            dispute_status = "not_disputed"
+            for dispute in disputes_by_loan.get(loan_id, []):
+                filed_date = date.fromisoformat(str(dispute["filed_at"])[:10])
+                if filed_date > snapshot_date:
+                    continue
+                resolved_date = (
+                    date.fromisoformat(str(dispute["resolved_at"])[:10])
+                    if dispute["resolved_at"] is not None
+                    else None
+                )
+                if resolved_date is None or resolved_date > snapshot_date:
+                    dispute_status = "under_review"
+                elif dispute["status"] == "resolved":
+                    dispute_status = "resolved"
+                else:
+                    dispute_status = "not_disputed"
+            for reason in SNAPSHOT_REASONS:
+                if reason not in snapshot_reasons[snapshot_date]:
+                    continue
+                delinquency_snapshots.append(
+                    {
+                        "snapshot_id": ids.next_id("delinquency_snapshot"),
+                        "loan_id": loan_id,
+                        "snapshot_date": snapshot_date.isoformat(),
+                        "snapshot_reason": reason,
+                        "days_past_due": days_past_due,
+                        "arrears_amount": arrears_amount,
+                        "risk_score": risk_score,
+                        "risk_band": customer_risk_band,
+                        "dispute_status": dispute_status,
+                        "created_at": UTC_GENERATED_AT,
+                    }
+                )
+
     dataset: Dataset = {
         "customer": customers,
         "account": accounts,
         "loan": loans_rows,
         "installment": installments,
+        "delinquency_snapshot": delinquency_snapshots,
         "contact_preference": contact_preferences,
         "dispute": disputes,
         "hardship_request": hardship_requests,
@@ -544,6 +698,7 @@ def validate_dataset(dataset: Dataset) -> None:
         "account": "account_id",
         "loan": "loan_id",
         "installment": "installment_id",
+        "delinquency_snapshot": "snapshot_id",
         "contact_preference": "contact_preference_id",
         "dispute": "dispute_id",
         "hardship_request": "hardship_request_id",
@@ -665,6 +820,15 @@ def validate_dataset(dataset: Dataset) -> None:
         dataset["payment"],
         key=lambda row: (str(row["received_at"]), str(row["payment_id"])),
     )
+    payments_by_account: dict[str, list[Row]] = {}
+    for payment in dataset["payment"]:
+        payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
+    allocations_by_loan: dict[str, list[Row]] = {}
+    for allocation in dataset["payment_allocation"]:
+        loan_id = str(
+            installments_by_id[str(allocation["installment_id"])]["loan_id"]
+        )
+        allocations_by_loan.setdefault(loan_id, []).append(allocation)
     for payment in payments_by_date:
         payment_id = str(payment["payment_id"])
         account_id = str(payment["account_id"])
@@ -697,6 +861,35 @@ def validate_dataset(dataset: Dataset) -> None:
             != amount
         ):
             raise ValueError("payment allocations and unapplied amount do not reconcile")
+    snapshot_keys: set[tuple[str, str, str]] = set()
+    for snapshot in dataset["delinquency_snapshot"]:
+        loan_id = str(snapshot["loan_id"])
+        snapshot_date = date.fromisoformat(str(snapshot["snapshot_date"]))
+        reason = str(snapshot["snapshot_reason"])
+        if loan_id not in loan_ids:
+            raise ValueError("delinquency snapshot references an unknown loan")
+        if snapshot_date > AS_OF_DATE or reason not in SNAPSHOT_REASONS:
+            raise ValueError("delinquency snapshot has an invalid date or reason")
+        key = (loan_id, str(snapshot["snapshot_date"]), reason)
+        if key in snapshot_keys:
+            raise ValueError("duplicate delinquency snapshot trigger")
+        snapshot_keys.add(key)
+        arrears, dpd = calculate_delinquency(
+            grouped_installments[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(
+                str(loans_by_id[loan_id]["account_id"]), []
+            ),
+            snapshot_date,
+        )
+        if int(snapshot["arrears_amount"]) != arrears:
+            raise ValueError("snapshot arrears do not reconcile to source records")
+        if int(snapshot["days_past_due"]) != dpd:
+            raise ValueError("snapshot days-past-due do not reconcile to source records")
+        if snapshot["risk_band"] not in RISK_SCORE_BY_BAND:
+            raise ValueError("snapshot has an invalid risk band")
+        if int(snapshot["risk_score"]) != RISK_SCORE_BY_BAND[str(snapshot["risk_band"])]:
+            raise ValueError("snapshot risk score does not match its risk band")
     if any(
         str(row["account_id"]) not in accounts_by_id
         for table in ("contact_preference", "dispute", "hardship_request")
