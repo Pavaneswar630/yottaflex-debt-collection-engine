@@ -3,12 +3,13 @@
 import csv
 import math
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias
 from zoneinfo import ZoneInfo
 
 import numpy as np
+import yaml
 from numpy.random import Generator
 
 from yottaflex_debt_collection.ids import IdFactory
@@ -45,6 +46,7 @@ RISK_BANDS = ("low", "medium", "high", "critical")
 RISK_WEIGHTS = (0.40, 0.35, 0.20, 0.05)
 RISK_SCORE_BY_BAND = {"low": 20, "medium": 45, "high": 70, "critical": 90}
 SNAPSHOT_REASONS = ("month_end", "case_open", "as_of")
+POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "policy.yaml"
 UTC_GENERATED_AT = f"{GENERATION_DATE.isoformat()}T12:00:00+00:00"
 CSV_COLUMNS: dict[str, tuple[str, ...]] = {
     "customer": (
@@ -99,6 +101,22 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "risk_band",
         "dispute_status",
         "created_at",
+    ),
+    "collection_case": (
+        "case_id",
+        "account_id",
+        "loan_id",
+        "status",
+        "opened_at",
+        "closed_at",
+        "scored_at",
+        "priority_score",
+        "balance_component",
+        "age_component",
+        "risk_component",
+        "priority_tier",
+        "reason_codes",
+        "next_action_at",
     ),
     "contact_preference": (
         "contact_preference_id",
@@ -280,6 +298,112 @@ def calculate_delinquency(
     return arrears, dpd
 
 
+def _load_policy() -> dict[str, Any]:
+    with POLICY_PATH.open(encoding="utf-8") as source:
+        policy = yaml.safe_load(source)
+    if not isinstance(policy, dict):
+        raise ValueError(f"Policy must be a YAML mapping: {POLICY_PATH}")
+    return policy
+
+
+def _first_threshold_crossing_date(
+    installments: list[Row],
+    allocations: list[Row],
+    payments: list[Row],
+    as_of_date: date,
+    threshold_days: int,
+) -> date | None:
+    candidates = sorted(
+        {
+            due_date + timedelta(days=threshold_days)
+            for row in installments
+            if (
+                due_date := date.fromisoformat(str(row["due_date"]))
+            ) + timedelta(days=threshold_days)
+            <= as_of_date
+        }
+    )
+    for candidate in candidates:
+        _, days_past_due = calculate_delinquency(
+            installments, allocations, payments, candidate
+        )
+        if days_past_due >= threshold_days:
+            return candidate
+    return None
+
+
+def _score_case(
+    arrears: int,
+    principal: int,
+    days_past_due: int,
+    risk_score: int,
+    risk_band: str,
+    scoring_policy: dict[str, Any],
+) -> tuple[float, float, float, float, str, str]:
+    balance_component = (
+        round(min(arrears / principal, 1.0), 4) if principal > 0 else 0.0
+    )
+    age_component: float | None = None
+    age_reason = ""
+    for bucket in scoring_policy["dpd_buckets"]:
+        max_days = bucket["max_days"]
+        if days_past_due >= bucket["min_days"] and (
+            max_days is None or days_past_due <= max_days
+        ):
+            age_component = bucket["score"] / 100
+            age_reason = (
+                f"{scoring_policy['reason_codes']['age_prefix']}"
+                f"{bucket['name'].upper()}"
+            )
+            break
+    if age_component is None:
+        raise ValueError(f"No DPD scoring bucket covers {days_past_due} days")
+
+    risk_component = risk_score / 100
+    balance_thresholds = scoring_policy["balance_reason_thresholds"]
+    balance_reason_key = (
+        "balance_high"
+        if balance_component >= balance_thresholds["high_min"]
+        else "balance_medium"
+        if balance_component >= balance_thresholds["medium_min"]
+        else "balance_low"
+    )
+    balance_reason = scoring_policy["reason_codes"][balance_reason_key]
+    score = round(
+        100
+        * (
+            scoring_policy["w_balance"] * balance_component
+            + scoring_policy["w_age"] * age_component
+            + scoring_policy["w_risk"] * risk_component
+        ),
+        2,
+    )
+    tiers = scoring_policy["tiers"]
+    tier = (
+        "P1"
+        if score >= tiers["p1_min_score"]
+        else "P2"
+        if score >= tiers["p2_min_score"]
+        else "P3"
+    )
+    reason_codes = ";".join(
+        (
+            scoring_policy["reason_codes"]["case_open"],
+            balance_reason,
+            age_reason,
+            f"{scoring_policy['reason_codes']['risk_prefix']}{risk_band.upper()}",
+        )
+    )
+    return (
+        balance_component,
+        age_component,
+        risk_component,
+        score,
+        tier,
+        reason_codes,
+    )
+
+
 
 def generate_dataset(
     loans: int = 10_000,
@@ -293,6 +417,9 @@ def generate_dataset(
     """
     if isinstance(loans, bool) or not isinstance(loans, int) or loans < 1:
         raise ValueError("loans must be a positive integer")
+    policy = _load_policy()
+    threshold_days = policy["rules"]["R-CASE-01"]["dpd_threshold"]
+    scoring_policy = policy["scoring"]
     streams = EntityRandomStreams(seed)
     ids = IdFactory()
     customer_rng = streams.for_entity("customer")
@@ -598,6 +725,7 @@ def generate_dataset(
         allocations_by_loan.setdefault(loan_id, []).append(allocation)
 
     delinquency_snapshots: list[Row] = []
+    collection_cases: list[Row] = []
     for loan in loans_rows:
         loan_id = str(loan["loan_id"])
         account_id = str(loan["account_id"])
@@ -609,21 +737,63 @@ def generate_dataset(
             date.fromisoformat(str(loan["origination_date"])), AS_OF_DATE
         ):
             snapshot_reasons.setdefault(month_end, set()).add("month_end")
-        for installment in sorted(
-            loan_installments, key=lambda row: str(row["due_date"])
-        ):
-            due_date = date.fromisoformat(str(installment["due_date"]))
-            if due_date > AS_OF_DATE:
-                continue
-            arrears_on_due_date, _ = calculate_delinquency(
+        case_open_date = _first_threshold_crossing_date(
+            loan_installments,
+            loan_allocations,
+            loan_payments,
+            AS_OF_DATE,
+            threshold_days,
+        )
+        if case_open_date is not None:
+            snapshot_reasons.setdefault(case_open_date, set()).add("case_open")
+            arrears_at_score, dpd_at_score = calculate_delinquency(
                 loan_installments,
                 loan_allocations,
                 loan_payments,
-                due_date,
+                AS_OF_DATE,
             )
-            if arrears_on_due_date > 0:
-                snapshot_reasons.setdefault(due_date, set()).add("case_open")
-                break
+            customer_id = account_customer[account_id]
+            risk_band = str(customers_by_id[customer_id]["risk_band"])
+            risk_score = RISK_SCORE_BY_BAND[risk_band]
+            (
+                balance_component,
+                age_component,
+                risk_component,
+                priority_score,
+                priority_tier,
+                reason_codes,
+            ) = _score_case(
+                arrears_at_score,
+                int(loan["principal_amount"]),
+                dpd_at_score,
+                risk_score,
+                risk_band,
+                scoring_policy,
+            )
+            is_paid_off = loan["loan_status"] == "paid_off"
+            paid_off_date = loan["paid_off_date"]
+            collection_cases.append(
+                {
+                    "case_id": ids.next_id("collection_case"),
+                    "account_id": account_id,
+                    "loan_id": loan_id,
+                    "status": "resolved" if is_paid_off else "open",
+                    "opened_at": _timestamp(case_open_date),
+                    "closed_at": (
+                        _timestamp(date.fromisoformat(str(paid_off_date)))
+                        if is_paid_off
+                        else None
+                    ),
+                    "scored_at": AS_OF_DATE.isoformat(),
+                    "priority_score": f"{priority_score:.2f}",
+                    "balance_component": f"{balance_component:.4f}",
+                    "age_component": f"{age_component:.4f}",
+                    "risk_component": f"{risk_component:.4f}",
+                    "priority_tier": priority_tier,
+                    "reason_codes": reason_codes,
+                    "next_action_at": None,
+                }
+            )
         snapshot_reasons.setdefault(AS_OF_DATE, set()).add("as_of")
         customer_id = account_customer[account_id]
         customer_risk_band = str(customers_by_id[customer_id]["risk_band"])
@@ -675,6 +845,7 @@ def generate_dataset(
         "loan": loans_rows,
         "installment": installments,
         "delinquency_snapshot": delinquency_snapshots,
+        "collection_case": collection_cases,
         "contact_preference": contact_preferences,
         "dispute": disputes,
         "hardship_request": hardship_requests,
@@ -699,6 +870,7 @@ def validate_dataset(dataset: Dataset) -> None:
         "loan": "loan_id",
         "installment": "installment_id",
         "delinquency_snapshot": "snapshot_id",
+        "collection_case": "case_id",
         "contact_preference": "contact_preference_id",
         "dispute": "dispute_id",
         "hardship_request": "hardship_request_id",
@@ -716,6 +888,7 @@ def validate_dataset(dataset: Dataset) -> None:
     loans_by_id = {str(row["loan_id"]): row for row in dataset["loan"]}
     accounts_by_id = {str(row["account_id"]): row for row in dataset["account"]}
     customers_by_id = {str(row["customer_id"]): row for row in dataset["customer"]}
+    cases_by_loan: set[str] = set()
     for row in dataset["loan"]:
         if str(row["account_id"]) not in account_ids:
             raise ValueError("loan references an unknown account")
@@ -890,6 +1063,77 @@ def validate_dataset(dataset: Dataset) -> None:
             raise ValueError("snapshot has an invalid risk band")
         if int(snapshot["risk_score"]) != RISK_SCORE_BY_BAND[str(snapshot["risk_band"])]:
             raise ValueError("snapshot risk score does not match its risk band")
+    policy = _load_policy()
+    threshold_days = policy["rules"]["R-CASE-01"]["dpd_threshold"]
+    scoring_policy = policy["scoring"]
+    for case in dataset["collection_case"]:
+        loan_id = str(case["loan_id"])
+        if loan_id not in loans_by_id or str(case["account_id"]) != str(
+            loans_by_id[loan_id]["account_id"]
+        ):
+            raise ValueError("collection case references an invalid loan/account")
+        if loan_id in cases_by_loan:
+            raise ValueError("a loan has more than one threshold-triggered case")
+        cases_by_loan.add(loan_id)
+        opened_at = date.fromisoformat(str(case["opened_at"])[:10])
+        expected_opened_at = _first_threshold_crossing_date(
+            grouped_installments[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(str(case["account_id"]), []),
+            AS_OF_DATE,
+            threshold_days,
+        )
+        if expected_opened_at != opened_at:
+            raise ValueError("collection case was not opened on its first threshold date")
+        if case["scored_at"] != AS_OF_DATE.isoformat():
+            raise ValueError("collection case score must use the fixed as-of date")
+        arrears, dpd = calculate_delinquency(
+            grouped_installments[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(str(case["account_id"]), []),
+            AS_OF_DATE,
+        )
+        customer_id = str(accounts_by_id[str(case["account_id"])]["customer_id"])
+        risk_band = str(customers_by_id[customer_id]["risk_band"])
+        (
+            balance_component,
+            age_component,
+            risk_component,
+            expected_score,
+            expected_tier,
+            expected_reasons,
+        ) = _score_case(
+            arrears,
+            int(loans_by_id[loan_id]["principal_amount"]),
+            dpd,
+            RISK_SCORE_BY_BAND[risk_band],
+            risk_band,
+            scoring_policy,
+        )
+        expected_components = (balance_component, age_component, risk_component)
+        actual_components = (
+            float(case["balance_component"]),
+            float(case["age_component"]),
+            float(case["risk_component"]),
+        )
+        if actual_components != expected_components:
+            raise ValueError("collection case components do not match as-of records")
+        if float(case["priority_score"]) != expected_score:
+            raise ValueError("collection case priority score does not match components")
+        if case["priority_tier"] != expected_tier:
+            raise ValueError("collection case tier does not match its priority score")
+        if case["reason_codes"] != expected_reasons:
+            raise ValueError("collection case reason codes do not match score inputs")
+    for loan_id in loan_ids:
+        expected_opened_at = _first_threshold_crossing_date(
+            grouped_installments[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(str(loans_by_id[loan_id]["account_id"]), []),
+            AS_OF_DATE,
+            threshold_days,
+        )
+        if (expected_opened_at is not None) != (loan_id in cases_by_loan):
+            raise ValueError("collection case coverage does not match threshold crossings")
     if any(
         str(row["account_id"]) not in accounts_by_id
         for table in ("contact_preference", "dispute", "hardship_request")

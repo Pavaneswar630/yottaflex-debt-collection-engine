@@ -9,6 +9,8 @@ from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import yaml
+
 from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
     SEGMENT_PROBABILITIES,
@@ -16,6 +18,11 @@ from yottaflex_debt_collection.generator import (
 )
 from yottaflex_debt_collection.schema_loader import load_dictionary
 from yottaflex_debt_collection.settings import AS_OF_DATE
+
+ROOT = Path(__file__).resolve().parents[1]
+POLICY = yaml.safe_load(
+    (ROOT / "config" / "policy.yaml").read_text(encoding="utf-8")
+)
 
 
 def _reference_delinquency(
@@ -101,6 +108,10 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(len(dataset["account"]), 2_000)
         self.assertEqual(len(dataset["contact_preference"]), 2_000)
         self.assertEqual(len(dataset["latent_segments"]), 2_000)
+        self.assertEqual(
+            {row["priority_tier"] for row in dataset["collection_case"]},
+            {"P1", "P2", "P3"},
+        )
         accounts_per_customer = Counter(
             row["customer_id"] for row in dataset["account"]
         )
@@ -226,6 +237,32 @@ class GeneratorTests(unittest.TestCase):
         payments = dataset["payment"]
         snapshots = dataset["delinquency_snapshot"]
         self.assertTrue(snapshots)
+        loan_accounts = {
+            str(row["loan_id"]): str(row["account_id"])
+            for row in dataset["loan"]
+        }
+        installments_by_loan: dict[
+            str, list[dict[str, str | int | bool | None]]
+        ] = {}
+        for installment in installments:
+            installments_by_loan.setdefault(str(installment["loan_id"]), []).append(
+                installment
+            )
+        allocations_by_loan: dict[
+            str, list[dict[str, str | int | bool | None]]
+        ] = {}
+        for allocation in allocations:
+            allocation_loan_id = next(
+                str(installment["loan_id"])
+                for installment in installments
+                if installment["installment_id"] == allocation["installment_id"]
+            )
+            allocations_by_loan.setdefault(allocation_loan_id, []).append(allocation)
+        payments_by_account: dict[
+            str, list[dict[str, str | int | bool | None]]
+        ] = {}
+        for payment in payments:
+            payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
 
         snapshots_by_loan: dict[
             str, list[dict[str, str | int | bool | None]]
@@ -235,7 +272,11 @@ class GeneratorTests(unittest.TestCase):
             snapshots_by_loan.setdefault(loan_id, []).append(snapshot)
             snapshot_date = date.fromisoformat(str(snapshot["snapshot_date"]))
             expected_arrears, expected_dpd = _reference_delinquency(
-                loan_id, snapshot_date, installments, allocations, payments
+                loan_id,
+                snapshot_date,
+                installments_by_loan[loan_id],
+                allocations_by_loan.get(loan_id, []),
+                payments_by_account.get(loan_accounts[loan_id], []),
             )
             self.assertEqual(int(snapshot["arrears_amount"]), expected_arrears)
             self.assertEqual(int(snapshot["days_past_due"]), expected_dpd)
@@ -243,6 +284,9 @@ class GeneratorTests(unittest.TestCase):
         saw_case_open = False
         for loan_id, loan in loans.items():
             rows = snapshots_by_loan[loan_id]
+            loan_installments = installments_by_loan[loan_id]
+            loan_allocations = allocations_by_loan.get(loan_id, [])
+            loan_payments = payments_by_account.get(loan_accounts[loan_id], [])
             actual_reasons = {
                 (str(row["snapshot_date"]), str(row["snapshot_reason"]))
                 for row in rows
@@ -264,21 +308,24 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn((AS_OF_DATE.isoformat(), "as_of"), actual_reasons)
             due_dates = sorted(
                 date.fromisoformat(str(row["due_date"]))
-                for row in installments
-                if row["loan_id"] == loan_id
-                and date.fromisoformat(str(row["due_date"])) <= AS_OF_DATE
+                for row in loan_installments
+                if date.fromisoformat(str(row["due_date"])) <= AS_OF_DATE
             )
-            expected_case_open = next(
-                (
-                    due_date
-                    for due_date in due_dates
-                    if _reference_delinquency(
-                        loan_id, due_date, installments, allocations, payments
-                    )[0]
-                    > 0
-                ),
-                None,
-            )
+            expected_case_open = None
+            if due_dates:
+                candidate = due_dates[0]
+                while candidate <= AS_OF_DATE:
+                    _, dpd = _reference_delinquency(
+                        loan_id,
+                        candidate,
+                        loan_installments,
+                        loan_allocations,
+                        loan_payments,
+                    )
+                    if dpd >= POLICY["rules"]["R-CASE-01"]["dpd_threshold"]:
+                        expected_case_open = candidate
+                        break
+                    candidate += date.resolution
             case_open_snapshots = [
                 row for row in rows if row["snapshot_reason"] == "case_open"
             ]
@@ -292,6 +339,108 @@ class GeneratorTests(unittest.TestCase):
                     expected_case_open.isoformat(),
                 )
         self.assertTrue(saw_case_open)
+
+    def test_cases_open_at_first_dpd_threshold_and_store_explainable_scores(self) -> None:
+        dataset = generate_dataset(120, 310)
+        threshold = POLICY["rules"]["R-CASE-01"]["dpd_threshold"]
+        loans = {str(row["loan_id"]): row for row in dataset["loan"]}
+        customers = {str(row["customer_id"]): row for row in dataset["customer"]}
+        accounts = {str(row["account_id"]): row for row in dataset["account"]}
+        installments = dataset["installment"]
+        allocations = dataset["payment_allocation"]
+        payments = dataset["payment"]
+        cases_by_loan = {str(row["loan_id"]): row for row in dataset["collection_case"]}
+
+        for loan_id, loan in loans.items():
+            loan_installments = [
+                row for row in installments if row["loan_id"] == loan_id
+            ]
+            loan_installment_ids = {
+                str(row["installment_id"]) for row in loan_installments
+            }
+            loan_allocations = [
+                row
+                for row in allocations
+                if row["installment_id"] in loan_installment_ids
+            ]
+            loan_account_id = str(loan["account_id"])
+            loan_payments = [
+                row for row in payments if row["account_id"] == loan_account_id
+            ]
+            earliest_due = min(
+                date.fromisoformat(str(row["due_date"])) for row in loan_installments
+            )
+            expected_open_date = None
+            candidate = earliest_due
+            while candidate <= AS_OF_DATE:
+                _, dpd = _reference_delinquency(
+                    loan_id, candidate, loan_installments, loan_allocations, loan_payments
+                )
+                if dpd >= threshold:
+                    expected_open_date = candidate
+                    break
+                candidate += date.resolution
+
+            case = cases_by_loan.get(loan_id)
+            if expected_open_date is None:
+                self.assertIsNone(case)
+                continue
+            self.assertIsNotNone(case)
+            assert case is not None
+            self.assertEqual(
+                str(case["opened_at"])[:10], expected_open_date.isoformat()
+            )
+
+            arrears, dpd = _reference_delinquency(
+                loan_id, AS_OF_DATE, loan_installments, loan_allocations, loan_payments
+            )
+            self.assertEqual(case["scored_at"], AS_OF_DATE.isoformat())
+            account = accounts[str(loan["account_id"])]
+            customer = customers[str(account["customer_id"])]
+            risk_band = str(customer["risk_band"])
+            risk_score_by_band = {"low": 20, "medium": 45, "high": 70, "critical": 90}
+            balance_component = min(arrears / int(loan["principal_amount"]), 1.0)
+            age_bucket = next(
+                bucket
+                for bucket in POLICY["scoring"]["dpd_buckets"]
+                if dpd >= bucket["min_days"]
+                and (bucket["max_days"] is None or dpd <= bucket["max_days"])
+            )
+            age_component = age_bucket["score"] / 100
+            risk_component = risk_score_by_band[risk_band] / 100
+            expected_score = round(
+                100
+                * (
+                    POLICY["scoring"]["w_balance"] * round(balance_component, 4)
+                    + POLICY["scoring"]["w_age"] * age_component
+                    + POLICY["scoring"]["w_risk"] * risk_component
+                ),
+                2,
+            )
+            self.assertAlmostEqual(
+                float(case["balance_component"]), balance_component, places=4
+            )
+            self.assertAlmostEqual(
+                float(case["age_component"]), age_component, places=4
+            )
+            self.assertAlmostEqual(
+                float(case["risk_component"]), risk_component, places=4
+            )
+            self.assertEqual(float(case["priority_score"]), expected_score)
+            expected_tier = (
+                "P1"
+                if expected_score >= POLICY["scoring"]["tiers"]["p1_min_score"]
+                else "P2"
+                if expected_score >= POLICY["scoring"]["tiers"]["p2_min_score"]
+                else "P3"
+            )
+            self.assertEqual(case["priority_tier"], expected_tier)
+            for reason_code in (
+                "CASE_DPD_THRESHOLD_CROSSED",
+                f"AGE_{age_bucket['name'].upper()}",
+                f"RISK_{risk_band.upper()}",
+            ):
+                self.assertIn(reason_code, str(case["reason_codes"]))
 
     def test_invalid_scale_is_rejected(self) -> None:
         for invalid in (0, -1, True):

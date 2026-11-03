@@ -125,7 +125,7 @@ Effective-dated contact channel and permissible local contact window.
 
 ### `collection_case`
 
-Explainable collection work item for an account and optionally one loan.
+Explainable collection work item opened when days-past-due first reaches policy threshold.
 
 | Field | Type | Required | Allowed values | Unit | Unique | Key / reference | Validation rule |
 |---|---|---:|---|---|---:|---|---|
@@ -135,7 +135,13 @@ Explainable collection work item for an account and optionally one loan.
 | `status` | `VARCHAR(16)` | Yes | `open`, `paused`, `resolved`, `closed` | none | No | — | Must be open, paused, resolved, or closed. |
 | `opened_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
 | `closed_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | When present, must not precede opened_at and status must be resolved or closed. |
+| `scored_at` | `DATE` | Yes | — | calendar date | No | — | Fixed as-of date on which stored score components and tier were calculated. |
 | `priority_score` | `NUMERIC(5,2)` | Yes | — | points on a 0-100 scale | No | — | Must be between 0 and 100 inclusive and derived from documented case inputs. |
+| `balance_component` | `NUMERIC(5,4)` | Yes | — | normalized fraction (0-1) | No | — | Equal to min(case-open arrears divided by original loan principal, 1). |
+| `age_component` | `NUMERIC(5,4)` | Yes | — | normalized fraction (0-1) | No | — | Equal to the configured DPD bucket score divided by 100 at case opening. |
+| `risk_component` | `NUMERIC(5,4)` | Yes | — | normalized fraction (0-1) | No | — | Equal to the generated customer risk score divided by 100. |
+| `priority_tier` | `VARCHAR(2)` | Yes | `P1`, `P2`, `P3` | none | No | — | P1 at score 70 or higher, P2 at 40 or higher, otherwise P3. |
+| `reason_codes` | `VARCHAR(200)` | Yes | — | semicolon-delimited reason codes | No | — | Must include the threshold-crossing reason and balance, age, and risk explanations. |
 | `next_action_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | When present, must respect contact preferences and applicable restrictions. |
 
 **Additional table constraints:**

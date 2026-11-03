@@ -42,6 +42,9 @@ rules:
     tie_breakers: [due_date, loan_id, sequence_number]
   R-SCORE-01:
     desc: Priority score is an explainable weighted sum of balance, delinquency age, and risk.
+  R-CASE-01:
+    desc: Open one collection case when DPD first reaches the configured threshold.
+    dpd_threshold: 1
   R-RECON-01:
     desc: Payment commitment reconciliation allows configured amount tolerance and grace period.
 
@@ -50,6 +53,23 @@ scoring:
   w_balance: 0.40
   w_age: 0.35
   w_risk: 0.25
+  balance_normalization: min(arrears_amount / loan.principal_amount, 1)
+  age_normalization: dpd_bucket_score / 100
+  risk_normalization: customer_risk_score / 100
+  evaluation_date: fixed_as_of_date
+  tiers:
+    p1_min_score: 70
+    p2_min_score: 40
+  balance_reason_thresholds:
+    medium_min: 0.25
+    high_min: 0.75
+  reason_codes:
+    case_open: CASE_DPD_THRESHOLD_CROSSED
+    balance_low: BALANCE_LOW
+    balance_medium: BALANCE_MEDIUM
+    balance_high: BALANCE_HIGH
+    age_prefix: AGE_
+    risk_prefix: RISK_
   dpd_buckets:
     - {name: current, min_days: 0, max_days: 0, score: 0}
     - {name: 1_30_days, min_days: 1, max_days: 30, score: 25}
@@ -57,8 +77,8 @@ scoring:
     - {name: 61_90_days, min_days: 61, max_days: 90, score: 75}
     - {name: over_90_days, min_days: 91, max_days: null, score: 100}
   formula: >-
-    weighted sum of normalized arrears balance, DPD bucket score, and risk score,
-    clamped to 0-100; weights must sum to 1.
+    100 * (0.40 * normalized arrears balance + 0.35 * normalized DPD bucket
+    score + 0.25 * normalized customer risk score); weights must sum to 1.
 
 reconcile:
   tolerance_pct: 5

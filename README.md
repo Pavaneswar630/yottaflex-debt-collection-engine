@@ -36,7 +36,7 @@ make schema
 
 `make data` creates the full 10,000-loan dataset; `make data-starter` creates a 100-loan sample; `make repro` checks repeat-generation checksums. The API, UI, demo, and AI-evaluation targets remain stubs. The as-of and generation dates are fixed to `2026-10-31`.
 
-The generator creates synthetic customer risk bands and timezones, accounts, loans, quarterly installment schedules, effective-dated contact preferences, optional dispute and hardship records, payments, and oldest-first payment allocations. Any unapplied payment balance is recorded explicitly. Latent behavior labels use the requested approximate proportions and are kept outside the input CSVs. No external or personal data is included. This project has no CI configuration by design.
+The generator creates synthetic customer risk bands and timezones, accounts, loans, quarterly installment schedules, effective-dated contact preferences, optional dispute and hardship records, payments, oldest-first payment allocations, delinquency snapshots, and threshold-triggered collection cases. Cases retain weighted balance/age/risk components, reason codes, and P1-P3 tiers. Any unapplied payment balance is recorded explicitly. Latent behavior labels use the requested approximate proportions and are kept outside the input CSVs. No external or personal data is included. This project has no CI configuration by design.
 
 The generation foundations use a configurable seed, fixed dates, named NumPy child streams, sequential ID factories, and integer cents in code and schema. See [docs/GENERATION.md](docs/GENERATION.md) for output details and validation.
 

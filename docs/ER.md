@@ -39,7 +39,7 @@ In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means z
 | Account → HardshipRequest | 0..N requests | exactly 1 account | A hardship request is optional and identifies the affected loan. |
 | Loan → HardshipRequest | 0..N requests | exactly 1 loan | A loan may have no hardship request; status and resolution timestamps record its lifecycle. |
 | Account → CollectionCase | 0..N cases | exactly 1 account | A case always belongs to an account. |
-| Loan → CollectionCase | 0..N historical cases; at most 1 with `status = 'open'` | 0..1 loan | `collection_case.loan_id` is nullable for account-level cases; a partial unique index prevents two open cases for one loan. |
+| Loan → CollectionCase | 0..N historical cases; at most 1 with `status = 'open'` | 0..1 loan | Generator opens a case when DPD first reaches the configured threshold; `collection_case.loan_id` is nullable for account-level cases; a partial unique index prevents two open cases for one loan. |
 | CollectionCase → ContactAttempt | 0..N attempts | exactly 1 case | Policy-blocked actions are retained as events, not sent contacts. |
 | CollectionCase → PromiseToPay | 0..N promises | exactly 1 case | A case may have no commitment. |
 | Payment ↔ Installment via PaymentAllocation | 0..N allocations | 0..N allocations | N:M bridge; each allocation references exactly one payment and one installment. |

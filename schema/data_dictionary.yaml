@@ -568,7 +568,7 @@ tables:
     - account_id
     - effective_from
 - name: collection_case
-  description: Explainable collection work item for an account and optionally one loan.
+  description: Explainable collection work item opened when days-past-due first reaches policy threshold.
   fields:
     case_id:
       name: case_id
@@ -632,6 +632,14 @@ tables:
       unit: UTC timestamp
       unique: false
       validation: When present, must not precede opened_at and status must be resolved or closed.
+    scored_at:
+      name: scored_at
+      type: DATE
+      required: true
+      allowed_values: []
+      unit: calendar date
+      unique: false
+      validation: Fixed as-of date on which stored score components and tier were calculated.
     priority_score:
       name: priority_score
       type: NUMERIC(5,2)
@@ -641,6 +649,52 @@ tables:
       unique: false
       validation: Must be between 0 and 100 inclusive and derived from documented case inputs.
       sql_check: priority_score BETWEEN 0 AND 100
+    balance_component:
+      name: balance_component
+      type: NUMERIC(5,4)
+      required: true
+      allowed_values: []
+      unit: normalized fraction (0-1)
+      unique: false
+      validation: Equal to min(case-open arrears divided by original loan principal, 1).
+      sql_check: balance_component BETWEEN 0 AND 1
+    age_component:
+      name: age_component
+      type: NUMERIC(5,4)
+      required: true
+      allowed_values: []
+      unit: normalized fraction (0-1)
+      unique: false
+      validation: Equal to the configured DPD bucket score divided by 100 at case opening.
+      sql_check: age_component BETWEEN 0 AND 1
+    risk_component:
+      name: risk_component
+      type: NUMERIC(5,4)
+      required: true
+      allowed_values: []
+      unit: normalized fraction (0-1)
+      unique: false
+      validation: Equal to the generated customer risk score divided by 100.
+      sql_check: risk_component BETWEEN 0 AND 1
+    priority_tier:
+      name: priority_tier
+      type: VARCHAR(2)
+      required: true
+      allowed_values:
+      - P1
+      - P2
+      - P3
+      unit: none
+      unique: false
+      validation: P1 at score 70 or higher, P2 at 40 or higher, otherwise P3.
+    reason_codes:
+      name: reason_codes
+      type: VARCHAR(200)
+      required: true
+      allowed_values: []
+      unit: semicolon-delimited reason codes
+      unique: false
+      validation: Must include the threshold-crossing reason and balance, age, and risk explanations.
     next_action_at:
       name: next_action_at
       type: TIMESTAMPTZ

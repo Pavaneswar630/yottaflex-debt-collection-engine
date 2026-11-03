@@ -29,6 +29,7 @@ class PolicyConfigTests(unittest.TestCase):
             "R-CEASE-01",
             "R-PAIDOFF-01",
             "R-SCORE-01",
+            "R-CASE-01",
             "R-RECON-01",
         }
         self.assertTrue(required_rules <= rules.keys())
@@ -66,6 +67,14 @@ class PolicyConfigTests(unittest.TestCase):
                 self.assertEqual(buckets[index + 1]["min_days"], bucket["max_days"] + 1)
                 self.assertIsNotNone(bucket["max_days"])
         self.assertIsNone(buckets[-1]["max_days"])
+        self.assertEqual(self.policy["rules"]["R-CASE-01"]["dpd_threshold"], 1)
+        self.assertEqual(scoring["tiers"], {"p1_min_score": 70, "p2_min_score": 40})
+        self.assertEqual(
+            scoring["balance_normalization"],
+            "min(arrears_amount / loan.principal_amount, 1)",
+        )
+        self.assertIn("100 *", scoring["formula"])
+        self.assertIn("normalized DPD bucket score", scoring["formula"])
 
     def test_reconciliation_tolerance_and_grace_period_are_explicit(self) -> None:
         self.assertEqual(self.policy["reconcile"]["tolerance_pct"], 5)
