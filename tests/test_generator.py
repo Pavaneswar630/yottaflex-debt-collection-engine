@@ -16,6 +16,7 @@ import yaml
 
 from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
+    CSV_PRIMARY_KEYS,
     SEGMENT_PROBABILITIES,
     _row_key,
     _first_matching_suppression_rule,
@@ -135,6 +136,14 @@ class GeneratorTests(unittest.TestCase):
                     hashlib.sha256((manifest_path.parent / name).read_bytes()).hexdigest(),
                     digest,
                 )
+            for table, key_fields in CSV_PRIMARY_KEYS.items():
+                csv_path = manifest_path.parent / f"{table}.csv"
+                raw = csv_path.read_bytes()
+                self.assertNotIn(b"\r\n", raw)
+                with csv_path.open(encoding="utf-8", newline="") as source:
+                    rows = list(csv.DictReader(source))
+                keys = [tuple(row[field] for field in key_fields) for row in rows]
+                self.assertEqual(keys, sorted(keys), table)
 
     def test_injected_anomalies_are_labeled_and_boundaries_remain_valid(self) -> None:
         with TemporaryDirectory() as output_dir, TemporaryDirectory() as repeat_dir:

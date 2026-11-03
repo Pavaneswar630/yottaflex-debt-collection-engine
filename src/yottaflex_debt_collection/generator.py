@@ -222,6 +222,24 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "actor_type",
     ),
 }
+CSV_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "customer": ("customer_id",),
+    "account": ("account_id",),
+    "loan": ("loan_id",),
+    "installment": ("installment_id",),
+    "delinquency_snapshot": ("snapshot_id",),
+    "collection_case": ("case_id",),
+    "contact_preference": ("contact_preference_id",),
+    "dispute": ("dispute_id",),
+    "hardship_request": ("hardship_request_id",),
+    "payment": ("payment_id",),
+    "payment_allocation": ("payment_id", "installment_id"),
+    "decision_log": ("decision_id",),
+    "contact_attempt": ("contact_attempt_id",),
+    "promise_to_pay": ("promise_id",),
+    "promise_reconciliation": ("promise_id", "payment_id"),
+    "state_event": ("state_event_id",),
+}
 
 
 def _add_months(value: date, months: int) -> date:
@@ -3137,7 +3155,14 @@ def write_dataset(
         with path.open("w", encoding="utf-8", newline="") as output:
             writer = csv.DictWriter(output, fieldnames=columns, lineterminator="\n")
             writer.writeheader()
-            writer.writerows(dataset[table])
+            writer.writerows(
+                sorted(
+                    dataset[table],
+                    key=lambda row: tuple(
+                        str(row[field]) for field in CSV_PRIMARY_KEYS[table]
+                    ),
+                )
+            )
     with (ground_truth_dir / "latent_segments.csv").open(
         "w", encoding="utf-8", newline=""
     ) as output:
@@ -3145,7 +3170,9 @@ def write_dataset(
             output, fieldnames=("loan_id", "segment"), lineterminator="\n"
         )
         writer.writeheader()
-        writer.writerows(dataset["latent_segments"])
+        writer.writerows(
+            sorted(dataset["latent_segments"], key=lambda row: str(row["loan_id"]))
+        )
     ground_truth_columns = (
         "scenario_id",
         "issue_type",
@@ -3164,7 +3191,9 @@ def write_dataset(
             output, fieldnames=ground_truth_columns, lineterminator="\n"
         )
         writer.writeheader()
-        writer.writerows(ground_truth or [])
+        writer.writerows(
+            sorted(ground_truth or [], key=lambda row: str(row["scenario_id"]))
+        )
     expected_decision_columns = (
         "scenario_id",
         "issue_type",
@@ -3183,10 +3212,22 @@ def write_dataset(
             lineterminator="\n",
         )
         writer.writeheader()
-        writer.writerows(expected_decisions or [])
+        writer.writerows(
+            sorted(
+                expected_decisions or [],
+                key=lambda row: str(row["scenario_id"]),
+            )
+        )
 
     input_dataset = {
-        table: rows for table, rows in dataset.items() if table != "latent_segments"
+        table: sorted(
+            rows,
+            key=lambda row: tuple(
+                str(row[field]) for field in CSV_PRIMARY_KEYS[table]
+            ),
+        )
+        for table, rows in dataset.items()
+        if table != "latent_segments"
     }
     json_path = data_dir / "dataset.json"
     with json_path.open("w", encoding="utf-8", newline="\n") as output:
@@ -3217,7 +3258,7 @@ def write_dataset(
         output.write("BEGIN;\n")
         for table in table_order:
             columns = CSV_COLUMNS[table]
-            rows = dataset[table]
+            rows = input_dataset[table]
             quoted_columns = ", ".join(f'"{column}"' for column in columns)
             for start in range(0, len(rows), 250):
                 output.write(
