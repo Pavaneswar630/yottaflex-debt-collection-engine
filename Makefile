@@ -1,4 +1,4 @@
-.PHONY: setup data data-starter validate integrity detect evaluate repro test api ui demo eval-ai schema
+.PHONY: setup data data-starter validate integrity detect evaluate db-load repro test api ui demo eval-ai schema
 
 setup:
 	python -m pip install -e ".[dev]"
@@ -23,6 +23,9 @@ detect:
 evaluate:
 	python -m yottaflex_debt_collection.evaluation --detections reports/detections.csv --ground-truth ground_truth/full/ground_truth.csv --report reports/detector_metrics.md
 
+db-load:
+	python -m yottaflex_debt_collection.database --data-dir data/full --ground-truth-dir ground_truth/full --db data/full/collection.sqlite
+
 repro:
 	python tools/repro.py --dataset full --loans 10000 --seed 20261022 --anomaly-rows 50 --report docs/validation_summary.md
 
@@ -30,7 +33,7 @@ test:
 	python -m pytest
 
 api:
-	@echo "TODO: API server is not implemented yet."
+	python -m yottaflex_debt_collection.api
 
 ui:
 	@echo "TODO: UI is not implemented yet."

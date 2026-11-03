@@ -146,6 +146,16 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Commit a validation summary containing checksums and reproducibility proof. | `tools/repro.py` | `tests/test_repro.py` | `docs/validation_summary.md` ; status: Summary generated; awaiting user review and commit |
 | Tag the core submission as `v0.9` after reviewing and committing export/repro work. | Git release process | User-run Git commands | Git tag `v0.9` ; status: Not tagged; awaiting user review |
 
+## H44-48 database, analytics SQL, and API
+
+| Brief sentence | Module | Test | Doc |
+|---|---|---|---|
+| Load exported CSVs into SQLite with foreign keys enabled. | `database.py`, `schema/sqlite_schema.sql` | `tests/test_database_api.py::DatabaseAnalyticsTests::test_loader_enforces_foreign_keys_and_protects_existing_database` | `docs/API.md` ; status: Implemented; loader checks foreign keys before replacing the output DB |
+| Add latest-snapshot, roll-rate, promise-kept-by-segment, cure-rate, violations-by-rule, and priority-queue views. | `schema/sqlite_schema.sql` | `tests/test_database_api.py::DatabaseAnalyticsTests::test_sql_views_match_independent_pandas_recomputation` | `docs/API.md` ; status: Implemented and compared with pandas |
+| Expose `/queue`, `/cases/{id}`, `/cases/{id}/timeline`, `/decisions`, `/exceptions`, `/metrics`, and `/health`. | `api.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Implemented as read-only endpoints |
+| Expose `/admin/policy`, `/admin/validation`, and `/admin/manifest`. | `api.py`, `integrity.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Read-only policy, validation, and manifest endpoints implemented |
+| Ensure API tests cover suppressed cases and blocked contact events. | `api.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Both response paths are tested |
+
 ## Numbered workflow rules and generation steps
 
 | Brief sentence | Module | Test | Doc |
