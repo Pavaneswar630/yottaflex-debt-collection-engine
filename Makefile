@@ -24,7 +24,7 @@ evaluate:
 	python -m yottaflex_debt_collection.evaluation --detections reports/detections.csv --ground-truth ground_truth/full/ground_truth.csv --report reports/detector_metrics.md
 
 repro:
-	python -m pytest tests/test_generator.py -k seed_repeats_records_and_export_checksums
+	python tools/repro.py --dataset full --loans 10000 --seed 20261022 --anomaly-rows 50 --report docs/validation_summary.md
 
 test:
 	python -m pytest
