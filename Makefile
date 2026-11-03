@@ -1,4 +1,4 @@
-.PHONY: setup data data-starter validate integrity detect evaluate db-load repro test api ui ui-build api-types demo eval-ai schema
+.PHONY: setup data data-starter validate integrity detect evaluate db-load repro test api ui ui-build api-types demo eval-ai schema readme-assets
 
 setup:
 	python -m pip install -e ".[dev]"
@@ -50,6 +50,9 @@ demo:
 
 eval-ai:
 	python tools/eval_ai.py --questions tests/ai_golden_questions.json --log reports/ai_evaluation.jsonl
+
+readme-assets:
+	python scripts/make_readme_assets.py
 
 schema:
 	python tools/generate_schema.py
