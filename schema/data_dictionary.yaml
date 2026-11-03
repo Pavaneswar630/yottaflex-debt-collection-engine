@@ -695,6 +695,18 @@ tables:
       unit: semicolon-delimited reason codes
       unique: false
       validation: Must include the threshold-crossing reason and balance, age, and risk explanations.
+    suppression_rule_id:
+      name: suppression_rule_id
+      type: VARCHAR(32)
+      required: false
+      allowed_values:
+      - R-PAIDOFF-01
+      - R-DISPUTE-01
+      - R-HARDSHIP-01
+      - R-CEASE-01
+      unit: policy rule identifier
+      unique: false
+      validation: When present, must be the first matching rule in the configured suppression order.
     next_action_at:
       name: next_action_at
       type: TIMESTAMPTZ

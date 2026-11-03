@@ -14,6 +14,7 @@ import yaml
 from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
     SEGMENT_PROBABILITIES,
+    _first_matching_suppression_rule,
     generate_dataset,
 )
 from yottaflex_debt_collection.schema_loader import load_dictionary
@@ -441,6 +442,93 @@ class GeneratorTests(unittest.TestCase):
                 f"RISK_{risk_band.upper()}",
             ):
                 self.assertIn(reason_code, str(case["reason_codes"]))
+
+    def test_suppression_uses_first_matching_policy_rule(self) -> None:
+        loan = {"loan_status": "paid_off"}
+        account = {"hardship_status": "approved"}
+        disputes = [
+            {
+                "status": "under_review",
+                "filed_at": "2026-10-01T12:00:00+00:00",
+                "resolved_at": None,
+            }
+        ]
+        hardship_requests = [
+            {
+                "status": "requested",
+                "requested_at": "2026-10-01T12:00:00+00:00",
+            }
+        ]
+        contact_preference = {
+            "do_not_contact": True,
+            "effective_from": "2026-01-01",
+            "effective_to": None,
+        }
+
+        self.assertEqual(
+            _first_matching_suppression_rule(
+                loan,
+                account,
+                disputes,
+                hardship_requests,
+                contact_preference,
+                AS_OF_DATE,
+                POLICY,
+            ),
+            "R-PAIDOFF-01",
+        )
+        loan["loan_status"] = "active"
+        self.assertEqual(
+            _first_matching_suppression_rule(
+                loan,
+                account,
+                disputes,
+                hardship_requests,
+                contact_preference,
+                AS_OF_DATE,
+                POLICY,
+            ),
+            "R-DISPUTE-01",
+        )
+        disputes.clear()
+        self.assertEqual(
+            _first_matching_suppression_rule(
+                loan,
+                account,
+                disputes,
+                hardship_requests,
+                contact_preference,
+                AS_OF_DATE,
+                POLICY,
+            ),
+            "R-HARDSHIP-01",
+        )
+        hardship_requests.clear()
+        account["hardship_status"] = "none"
+        self.assertEqual(
+            _first_matching_suppression_rule(
+                loan,
+                account,
+                disputes,
+                hardship_requests,
+                contact_preference,
+                AS_OF_DATE,
+                POLICY,
+            ),
+            "R-CEASE-01",
+        )
+        contact_preference["do_not_contact"] = False
+        self.assertIsNone(
+            _first_matching_suppression_rule(
+                loan,
+                account,
+                disputes,
+                hardship_requests,
+                contact_preference,
+                AS_OF_DATE,
+                POLICY,
+            )
+        )
 
     def test_invalid_scale_is_rejected(self) -> None:
         for invalid in (0, -1, True):

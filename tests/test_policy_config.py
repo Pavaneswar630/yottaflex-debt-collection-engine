@@ -38,6 +38,26 @@ class PolicyConfigTests(unittest.TestCase):
                 self.assertRegex(rule_id, r"^R-[A-Z]+-\d{2}$")
                 self.assertTrue(rule["desc"].strip())
 
+    def test_suppression_precedence_is_explicit_and_ordered(self) -> None:
+        self.assertEqual(
+            self.policy["suppression"]["first_match_order"],
+            [
+                "R-PAIDOFF-01",
+                "R-DISPUTE-01",
+                "R-HARDSHIP-01",
+                "R-CEASE-01",
+            ],
+        )
+        self.assertEqual(
+            self.policy["suppression"]["disposition"],
+            {
+                "R-PAIDOFF-01": "resolved",
+                "R-DISPUTE-01": "paused",
+                "R-HARDSHIP-01": "paused",
+                "R-CEASE-01": "paused",
+            },
+        )
+
     def test_contact_and_exception_rules_have_operational_parameters(self) -> None:
         rules = self.policy["rules"]
         self.assertEqual(rules["R-CONTACT-01"]["start_local"], "08:00")

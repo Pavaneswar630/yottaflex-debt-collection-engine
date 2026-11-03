@@ -179,6 +179,7 @@ CREATE TABLE collection_case (
     risk_component NUMERIC(5,4) NOT NULL,
     priority_tier VARCHAR(2) NOT NULL,
     reason_codes VARCHAR(200) NOT NULL,
+    suppression_rule_id VARCHAR(32),
     next_action_at TIMESTAMPTZ,
     CONSTRAINT collection_case_pkey PRIMARY KEY (case_id),
     CONSTRAINT collection_case_case_id_check CHECK (case_id ~ '^COL-2026-[0-9]{6}$'),
@@ -191,6 +192,11 @@ CREATE TABLE collection_case (
     CONSTRAINT collection_case_risk_component_check CHECK (risk_component BETWEEN 0 AND 1),
     CONSTRAINT collection_case_priority_tier_enum CHECK (priority_tier IN ('P1', 'P2', 'P3')),
     CONSTRAINT collection_case_reason_codes_check CHECK (length(trim(reason_codes)) > 0),
+    CONSTRAINT collection_case_suppression_rule_check CHECK (
+        suppression_rule_id IS NULL OR suppression_rule_id IN (
+            'R-PAIDOFF-01', 'R-DISPUTE-01', 'R-HARDSHIP-01', 'R-CEASE-01'
+        )
+    ),
     CONSTRAINT collection_case_close_order CHECK (closed_at IS NULL OR closed_at >= opened_at),
     CONSTRAINT collection_case_status_close_date CHECK ((status IN ('resolved', 'closed')) = (closed_at IS NOT NULL))
 );

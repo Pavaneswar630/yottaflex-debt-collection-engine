@@ -116,6 +116,7 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "risk_component",
         "priority_tier",
         "reason_codes",
+        "suppression_rule_id",
         "next_action_at",
     ),
     "contact_preference": (
@@ -404,6 +405,58 @@ def _score_case(
     )
 
 
+def _first_matching_suppression_rule(
+    loan: Row,
+    account: Row,
+    disputes: list[Row],
+    hardship_requests: list[Row],
+    contact_preference: Row,
+    as_of_date: date,
+    policy: dict[str, Any],
+) -> str | None:
+    """Return the first active suppression rule in configured precedence order."""
+    rules = policy["rules"]
+    for rule_id in policy["suppression"]["first_match_order"]:
+        rule = rules[rule_id]
+        if rule_id == "R-PAIDOFF-01":
+            matches = rule["exclude_paid_off_loans"] and loan["loan_status"] == "paid_off"
+        elif rule_id == "R-DISPUTE-01":
+            matches = any(
+                dispute["status"] in rule["statuses"]
+                and date.fromisoformat(str(dispute["filed_at"])[:10]) <= as_of_date
+                and (
+                    dispute["resolved_at"] is None
+                    or date.fromisoformat(str(dispute["resolved_at"])[:10])
+                    > as_of_date
+                )
+                for dispute in disputes
+            )
+        elif rule_id == "R-HARDSHIP-01":
+            matches = any(
+                request["status"] in rule["statuses"]
+                and date.fromisoformat(str(request["requested_at"])[:10]) <= as_of_date
+                for request in hardship_requests
+            ) or account["hardship_status"] in rule["statuses"]
+        elif rule_id == "R-CEASE-01":
+            effective_from = date.fromisoformat(str(contact_preference["effective_from"]))
+            effective_to = (
+                date.fromisoformat(str(contact_preference["effective_to"]))
+                if contact_preference["effective_to"] is not None
+                else None
+            )
+            matches = (
+                rule["block_outbound_contact"]
+                and bool(contact_preference["do_not_contact"])
+                and effective_from <= as_of_date
+                and (effective_to is None or effective_to >= as_of_date)
+            )
+        else:
+            raise ValueError(f"Unsupported suppression rule in policy: {rule_id}")
+        if matches:
+            return rule_id
+    return None
+
+
 
 def generate_dataset(
     loans: int = 10_000,
@@ -420,6 +473,18 @@ def generate_dataset(
     policy = _load_policy()
     threshold_days = policy["rules"]["R-CASE-01"]["dpd_threshold"]
     scoring_policy = policy["scoring"]
+    suppression_order = policy["suppression"]["first_match_order"]
+    expected_suppression_rules = {
+        "R-PAIDOFF-01",
+        "R-DISPUTE-01",
+        "R-HARDSHIP-01",
+        "R-CEASE-01",
+    }
+    if (
+        len(suppression_order) != len(set(suppression_order))
+        or set(suppression_order) != expected_suppression_rules
+    ):
+        raise ValueError("Suppression order must contain each supported rule exactly once")
     streams = EntityRandomStreams(seed)
     ids = IdFactory()
     customer_rng = streams.for_entity("customer")
@@ -709,9 +774,19 @@ def generate_dataset(
             loan["paid_off_date"] = last_payment_by_loan[loan_id].isoformat()
 
     customers_by_id = {str(row["customer_id"]): row for row in customers}
+    accounts_by_id = {str(row["account_id"]): row for row in accounts}
     disputes_by_loan: dict[str, list[Row]] = {}
+    disputes_by_account: dict[str, list[Row]] = {}
     for dispute in disputes:
         disputes_by_loan.setdefault(str(dispute["loan_id"]), []).append(dispute)
+        disputes_by_account.setdefault(str(dispute["account_id"]), []).append(dispute)
+    hardship_by_account: dict[str, list[Row]] = {}
+    for request in hardship_requests:
+        hardship_by_account.setdefault(str(request["account_id"]), []).append(request)
+    preferences_by_account = {
+        str(preference["account_id"]): preference
+        for preference in contact_preferences
+    }
     payments_by_account: dict[str, list[Row]] = {}
     for payment in payments:
         payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
@@ -746,6 +821,15 @@ def generate_dataset(
         )
         if case_open_date is not None:
             snapshot_reasons.setdefault(case_open_date, set()).add("case_open")
+            suppression_rule_id = _first_matching_suppression_rule(
+                loan,
+                accounts_by_id[account_id],
+                disputes_by_account.get(account_id, []),
+                hardship_by_account.get(account_id, []),
+                preferences_by_account[account_id],
+                AS_OF_DATE,
+                policy,
+            )
             arrears_at_score, dpd_at_score = calculate_delinquency(
                 loan_installments,
                 loan_allocations,
@@ -770,14 +854,21 @@ def generate_dataset(
                 risk_band,
                 scoring_policy,
             )
-            is_paid_off = loan["loan_status"] == "paid_off"
+            is_paid_off = suppression_rule_id == "R-PAIDOFF-01"
             paid_off_date = loan["paid_off_date"]
+            status = (
+                "resolved"
+                if is_paid_off
+                else policy["suppression"]["disposition"].get(
+                    suppression_rule_id, "open"
+                )
+            )
             collection_cases.append(
                 {
                     "case_id": ids.next_id("collection_case"),
                     "account_id": account_id,
                     "loan_id": loan_id,
-                    "status": "resolved" if is_paid_off else "open",
+                    "status": status,
                     "opened_at": _timestamp(case_open_date),
                     "closed_at": (
                         _timestamp(date.fromisoformat(str(paid_off_date)))
@@ -791,6 +882,7 @@ def generate_dataset(
                     "risk_component": f"{risk_component:.4f}",
                     "priority_tier": priority_tier,
                     "reason_codes": reason_codes,
+                    "suppression_rule_id": suppression_rule_id,
                     "next_action_at": None,
                 }
             )
@@ -996,6 +1088,15 @@ def validate_dataset(dataset: Dataset) -> None:
     payments_by_account: dict[str, list[Row]] = {}
     for payment in dataset["payment"]:
         payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
+    preferences_by_account = {
+        str(row["account_id"]): row for row in dataset["contact_preference"]
+    }
+    disputes_by_account: dict[str, list[Row]] = {}
+    for dispute in dataset["dispute"]:
+        disputes_by_account.setdefault(str(dispute["account_id"]), []).append(dispute)
+    hardships_by_account: dict[str, list[Row]] = {}
+    for request in dataset["hardship_request"]:
+        hardships_by_account.setdefault(str(request["account_id"]), []).append(request)
     allocations_by_loan: dict[str, list[Row]] = {}
     for allocation in dataset["payment_allocation"]:
         loan_id = str(
@@ -1124,6 +1225,27 @@ def validate_dataset(dataset: Dataset) -> None:
             raise ValueError("collection case tier does not match its priority score")
         if case["reason_codes"] != expected_reasons:
             raise ValueError("collection case reason codes do not match score inputs")
+        account_id = str(case["account_id"])
+        expected_suppression = _first_matching_suppression_rule(
+            loans_by_id[loan_id],
+            accounts_by_id[account_id],
+            disputes_by_account.get(account_id, []),
+            hardships_by_account.get(account_id, []),
+            preferences_by_account[account_id],
+            AS_OF_DATE,
+            policy,
+        )
+        if case["suppression_rule_id"] != expected_suppression:
+            raise ValueError("collection case did not retain the first matching suppression rule")
+        expected_status = (
+            "resolved"
+            if expected_suppression == "R-PAIDOFF-01"
+            else policy["suppression"]["disposition"].get(
+                expected_suppression, "open"
+            )
+        )
+        if case["status"] != expected_status:
+            raise ValueError("collection case status does not match suppression policy")
     for loan_id in loan_ids:
         expected_opened_at = _first_threshold_crossing_date(
             grouped_installments[loan_id],

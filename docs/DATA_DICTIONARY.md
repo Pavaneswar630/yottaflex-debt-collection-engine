@@ -142,6 +142,7 @@ Explainable collection work item opened when days-past-due first reaches policy 
 | `risk_component` | `NUMERIC(5,4)` | Yes | — | normalized fraction (0-1) | No | — | Equal to the generated customer risk score divided by 100. |
 | `priority_tier` | `VARCHAR(2)` | Yes | `P1`, `P2`, `P3` | none | No | — | P1 at score 70 or higher, P2 at 40 or higher, otherwise P3. |
 | `reason_codes` | `VARCHAR(200)` | Yes | — | semicolon-delimited reason codes | No | — | Must include the threshold-crossing reason and balance, age, and risk explanations. |
+| `suppression_rule_id` | `VARCHAR(32)` | No | `R-PAIDOFF-01`, `R-DISPUTE-01`, `R-HARDSHIP-01`, `R-CEASE-01` | policy rule identifier | No | — | When present, must be the first matching rule in the configured suppression order. |
 | `next_action_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | When present, must respect contact preferences and applicable restrictions. |
 
 **Additional table constraints:**

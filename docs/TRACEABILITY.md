@@ -160,11 +160,11 @@ This matrix maps every requirement statement and list item in the supplied brief
 
 | Brief sentence | Module | Test | Doc |
 |---|---|---|---|
-| Edge case: a paid account remains in collection. | `generator.py`, `validation.py`, `R-PAIDOFF-01` | `test_edge_cases.py` | `docs/VALIDATION.md` ; status: Planned |
+| Edge case: a paid account remains in collection. | `generator.py`, `R-PAIDOFF-01` | `test_generator.py`, `test_policy_config.py` | `docs/GENERATION.md` ; status: Paid-off rule has first suppression precedence and resolves the case |
 | Edge case: contact occurs outside the allowed window. | `generator.py`, `contacts.py`, `R-CONTACT-01` | `test_edge_cases.py`, `test_contact_policy.py` | `docs/VALIDATION.md` ; status: Planned |
 | Edge case: payment is allocated to the wrong installment. | `generator.py`, `reconciliation.py`, `validation.py` | `test_edge_cases.py`, `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
 | Edge case: promise amount exceeds arrears. | `generator.py`, `reconciliation.py`, `validation.py` | `test_edge_cases.py`, `test_promise_lifecycle.py` | `docs/VALIDATION.md` ; status: Planned |
-| Edge case: disputed debt is treated as confirmed. | `generator.py`, `prioritization.py`, `R-DISPUTE-01` | `test_edge_cases.py` | `docs/VALIDATION.md` ; status: Planned |
+| Edge case: disputed debt is treated as confirmed. | `generator.py`, `R-DISPUTE-01` | `test_generator.py`, `test_policy_config.py` | `docs/GENERATION.md` ; status: Active dispute suppresses collection; first-matching rule is retained |
 
 ## Acceptance criteria
 

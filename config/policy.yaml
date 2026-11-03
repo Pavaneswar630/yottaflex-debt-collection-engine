@@ -48,6 +48,18 @@ rules:
   R-RECON-01:
     desc: Payment commitment reconciliation allows configured amount tolerance and grace period.
 
+suppression:
+  first_match_order:
+    - R-PAIDOFF-01
+    - R-DISPUTE-01
+    - R-HARDSHIP-01
+    - R-CEASE-01
+  disposition:
+    R-PAIDOFF-01: resolved
+    R-DISPUTE-01: paused
+    R-HARDSHIP-01: paused
+    R-CEASE-01: paused
+
 scoring:
   scale: {minimum: 0, maximum: 100}
   w_balance: 0.40
