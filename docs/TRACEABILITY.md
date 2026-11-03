@@ -156,6 +156,18 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Expose `/admin/policy`, `/admin/validation`, and `/admin/manifest`. | `api.py`, `integrity.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Read-only policy, validation, and manifest endpoints implemented |
 | Ensure API tests cover suppressed cases and blocked contact events. | `api.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Both response paths are tested |
 
+## H61-66 packaging, documentation, and release readiness
+
+| Brief sentence | Module | Test | Doc |
+|---|---|---|---|
+| Provide a multi-stage container build and Compose services for API and UI. | `Dockerfile`, `docker-compose.yml`, `docker/` | `docker compose config --quiet`, `docker compose build` | `docs/DESIGN.md`, `docs/UI.md` ; status: Implemented; generated dataset and SQLite are persisted in named volumes |
+| Document the local/container quickstart, generator command, seed, validation, and limitations. | `README.md`, `Makefile` | `tests/test_makefile_targets.py` | README ; status: Implemented |
+| Map actors to screens and explain system outcomes. | `SUMMARY.md`, UI/API | Documentation review | `SUMMARY.md` ; status: Implemented; customer-facing portal is explicitly out of scope |
+| Record assumptions and data provenance. | `docs/ASSUMPTIONS.md`, `SOURCE_MANIFEST.md` | Documentation review | Both files ; status: Implemented; no external data is used; A01 remains a production confirmation item |
+| Provide a deterministic demo covering the top queue, a suppressed case, and a blocked contact. | `tools/demo.py`, `Makefile` | `tests/test_demo.py` | `docs/DEMO.md` ; status: Implemented; demo reads SQLite and does not send or schedule contact |
+| Produce a three-minute screen recording. | Local screen-capture tool | Manual capture | `docs/DEMO.md` ; status: Recording is not generated; a timed capture script is provided |
+| Fresh-clone verification: Compose, Python tests, reproduction, and AI evaluation. | Docker Compose, `tests/`, `tools/repro.py`, `tools/eval_ai.py` | Commands in README | README ; status: Python suite, full-scale repro, and AI evaluation pass; Compose syntax passes but image build/runtime could not be verified because Docker Desktop's engine would not start; commit, push, and release tag are left to the repository owner |
+
 ## H48-55 React/TypeScript UI
 
 | Brief sentence | Module | Test | Doc |

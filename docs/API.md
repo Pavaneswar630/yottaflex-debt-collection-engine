@@ -53,6 +53,8 @@ Start the server with `make api`. All endpoints are read-only. For the React UI,
 
 Configure the input paths with `YOTTAFLEX_DATA_DIR`, `YOTTAFLEX_DB_PATH`, and `YOTTAFLEX_GROUND_TRUTH_DIR` environment variables. The copilot endpoints do not write to the collection database or schedule/send contact. Admin endpoints expose read-only configuration/validation information; no write, policy-edit, or customer-contact endpoint is provided. See [docs/AI.md](AI.md) for provider opt-in, guardrails, and logging.
 
+For the containerized app, `docker compose up --build` starts the API and UI, generating and loading the default synthetic data on first startup. The API is available at `http://127.0.0.1:8000`; the UI is at `http://127.0.0.1:8080` and proxies `/api` requests internally.
+
 ## Verification
 
 `tests/test_database_api.py` loads a generated dataset into SQLite, verifies FK enforcement, compares all six view outputs against independent pandas recomputations, and exercises the API including suppressed cases and blocked contact history.

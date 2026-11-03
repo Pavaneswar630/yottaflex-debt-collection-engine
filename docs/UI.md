@@ -28,6 +28,12 @@ Open `http://127.0.0.1:5173`. Vite forwards the UI's `/api` requests to `http://
 
 The case copilot uses a deterministic template by default. It cites retrieved policy/document sections and displays which fixed read-only tools were used.
 
+## Docker Compose
+
+From the repository root, run `docker compose up --build` and open `http://127.0.0.1:8080`. On first startup, the API service generates the full 10,000-loan dataset with seed `20261022`, loads the SQLite database, and then serves the UI after the API health check passes. Named volumes retain exports, labels, and copilot logs between container restarts. Stop the services with `docker compose down`; remove named data volumes only when you explicitly want to regenerate from scratch.
+
+For a faster smoke run, set `YOTTAFLEX_LOANS=100` before starting Compose. The optional hosted provider is used only when `OPENAI_API_KEY` is configured; otherwise the local template is used.
+
 ## Build and API types
 
 ```powershell

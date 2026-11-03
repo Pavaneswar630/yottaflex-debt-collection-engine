@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      YOTTAFLEX_DATA_DIR: /app/data/full
+      YOTTAFLEX_GROUND_TRUTH_DIR: /app/ground_truth/full
+      YOTTAFLEX_AI_LOG_PATH: /app/reports/copilot_interactions.jsonl
+      YOTTAFLEX_HOST: 0.0.0.0
+      YOTTAFLEX_LOANS: ${YOTTAFLEX_LOANS:-10000}
+      YOTTAFLEX_SEED: ${YOTTAFLEX_SEED:-20261022}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      YOTTAFLEX_AI_MODEL: ${YOTTAFLEX_AI_MODEL:-gpt-4o-mini}
+    volumes:
+      - dataset:/app/data
+      - labels:/app/ground_truth
+      - reports:/app/reports
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      target: ui
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+
+volumes:
+  dataset:
+  labels:
+  reports:

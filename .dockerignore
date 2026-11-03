@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+*.py[cod]
+*.egg-info
+build
+dist
+node_modules
+ui/node_modules
+ui/dist
+data
+ground_truth
+reports
+.coverage
+htmlcov

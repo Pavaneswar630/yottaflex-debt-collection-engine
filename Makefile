@@ -46,7 +46,7 @@ api-types:
 	npm --prefix ui run generate:api-types
 
 demo:
-	@echo "TODO: end-to-end demo is not implemented yet."
+	python tools/demo.py --db data/full/collection.sqlite
 
 eval-ai:
 	python tools/eval_ai.py --questions tests/ai_golden_questions.json --log reports/ai_evaluation.jsonl
