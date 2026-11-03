@@ -118,6 +118,15 @@ export interface ManifestResponse {
   files: Record<string, string>
 }
 
+export interface CopilotResponse {
+  answer: string
+  refused: boolean
+  citations: string[]
+  tools_used: string[]
+  provider: 'template' | 'openai'
+  latency_ms: number
+}
+
 export interface PolicyResponse {
   policy_version: number
   description: string
@@ -186,5 +195,24 @@ export const api = {
   },
   policy() {
     return getJson<PolicyResponse>('/admin/policy', '/admin/policy')
+  },
+  copilot(question: string, caseId: string) {
+    return fetch('/api/copilot/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, case_id: caseId }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        let message = `Request failed (${response.status})`
+        try {
+          const body = (await response.json()) as { detail?: string }
+          if (body.detail) message = body.detail
+        } catch {
+          // Keep the HTTP status message when the server does not return JSON.
+        }
+        throw new Error(`/copilot/chat: ${message}`)
+      }
+      return (await response.json()) as CopilotResponse
+    })
   },
 }

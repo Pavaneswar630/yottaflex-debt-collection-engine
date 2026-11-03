@@ -3,7 +3,7 @@
 The React/TypeScript frontend provides four views over the read-only API:
 
 - **Priority queue:** search/filter and paginate open cases by tier, DPD, arrears, score, reason codes, and next action.
-- **Case details:** show score components, reason codes, account context, and the recorded event timeline.
+- **Case details:** show score components, reason codes, account context, the recorded event timeline, and a policy-grounded copilot panel.
 - **Compliance & metrics:** inspect input-only detector results, policy decision counts, promise outcomes, and cure rates.
 - **Administration:** view API/database health, validation results, dataset manifest, and active policy.
 
@@ -25,6 +25,8 @@ make ui
 ```
 
 Open `http://127.0.0.1:5173`. Vite forwards the UI's `/api` requests to `http://127.0.0.1:8000`; no CORS configuration or API write access is needed. The frontend shows loading and retryable error states when the API or data are unavailable.
+
+The case copilot uses a deterministic template by default. It cites retrieved policy/document sections and displays which fixed read-only tools were used.
 
 ## Build and API types
 

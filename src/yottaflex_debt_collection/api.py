@@ -9,7 +9,9 @@ from typing import Any
 import uvicorn
 import yaml
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
+from yottaflex_debt_collection.copilot import CollectionCopilot
 from yottaflex_debt_collection.database import connect_readonly
 from yottaflex_debt_collection.detectors import detect
 from yottaflex_debt_collection.integrity import validate_dataset_directory
@@ -18,11 +20,21 @@ from yottaflex_debt_collection.integrity import validate_dataset_directory
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class CopilotChatRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    case_id: str | None = Field(default=None, max_length=32)
+
+
+class OutreachCheckRequest(BaseModel):
+    draft: str = Field(min_length=1, max_length=8000)
+
+
 def create_app(
     data_dir: Path | str = Path("data/full"),
     db_path: Path | str | None = None,
     ground_truth_dir: Path | str | None = None,
     policy_path: Path | str = ROOT / "config" / "policy.yaml",
+    ai_log_path: Path | str | None = None,
 ) -> FastAPI:
     """Create the read-only API for one generated dataset."""
     data_root = Path(data_dir).resolve()
@@ -37,6 +49,16 @@ def create_app(
         else (data_root.parent.parent / "ground_truth" / data_root.name).resolve()
     )
     policy_file = Path(policy_path).resolve()
+    interaction_log = (
+        Path(ai_log_path)
+        if ai_log_path is not None
+        else Path(
+            os.environ.get(
+                "YOTTAFLEX_AI_LOG_PATH",
+                "reports/copilot_interactions.jsonl",
+            )
+        )
+    )
 
     app = FastAPI(
         title="Yottaflex Debt Collection Read API",
@@ -47,6 +69,11 @@ def create_app(
     app.state.database_path = database_path
     app.state.ground_truth_dir = labels_root
     app.state.policy_path = policy_file
+    app.state.copilot = CollectionCopilot(
+        ROOT,
+        database_path,
+        log_path=interaction_log,
+    )
 
     def query_all(sql: str, parameters: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         try:
@@ -282,6 +309,20 @@ def create_app(
         if not isinstance(result, dict):
             raise HTTPException(status_code=500, detail="Manifest root must be an object")
         return result
+
+    @app.post("/copilot/chat")
+    def copilot_chat(request: CopilotChatRequest) -> dict[str, object]:
+        try:
+            return app.state.copilot.answer(
+                request.question,
+                case_id=request.case_id,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/copilot/check-outreach")
+    def copilot_check_outreach(request: OutreachCheckRequest) -> dict[str, object]:
+        return app.state.copilot.check_outreach(request.draft)
 
     return app
 

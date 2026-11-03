@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
 import type {
   CaseDetail,
+  CopilotResponse,
   ExceptionItem,
   QueueItem,
   TimelineEvent,
@@ -283,6 +285,7 @@ function CaseDetailView({ detail, events }: { detail: CaseDetail; events: Timeli
             <div className="panel-heading"><div><div className="section-title">Case timeline</div><div className="section-subtitle">Recorded events and commitment outcomes</div></div><span className="event-count">{events.length} events</span></div>
             {events.length ? <Timeline events={events} /> : <div className="empty-state">No timeline events have been recorded for this case.</div>}
           </section>
+          <CopilotPanel caseId={detail.case_id} />
         </div>
         <aside className="detail-side">
           <section className="panel overview-panel">
@@ -302,6 +305,53 @@ function CaseDetailView({ detail, events }: { detail: CaseDetail; events: Timeli
         </aside>
       </div>
     </>
+  )
+}
+
+function CopilotPanel({ caseId }: { caseId: string }) {
+  const [question, setQuestion] = useState('Explain this case score and any recorded restrictions.')
+  const [response, setResponse] = useState<CopilotResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function askCopilot(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!question.trim() || loading) return
+    setLoading(true)
+    setError(null)
+    setResponse(null)
+    try {
+      setResponse(await api.copilot(question.trim(), caseId))
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'Unexpected assistant error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <section className="panel copilot-panel">
+      <div className="panel-heading">
+        <div><div className="copilot-title"><span>✦</span> Policy copilot</div><div className="section-subtitle">Grounded answers from policy and this case’s recorded facts</div></div>
+        <span className="read-only"><span /> Read-only</span>
+      </div>
+      <form className="copilot-form" onSubmit={askCopilot}>
+        <label className="copilot-input-label" htmlFor="copilot-question">Ask about this case</label>
+        <textarea id="copilot-question" rows={2} maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about the score, timeline, promises or contact policy…" />
+        <div className="copilot-form-foot"><span>Answers cite rules and never schedule or send contact.</span><button className="button button-primary" type="submit" disabled={loading || !question.trim()}>{loading ? 'Checking…' : 'Ask copilot'} <span>→</span></button></div>
+      </form>
+      {loading && <LoadingState label="Checking documented policy and case records…" />}
+      {error && <div className="copilot-error" role="alert"><strong>Assistant unavailable</strong><span>{error}</span><button className="button button-secondary" onClick={() => setError(null)}>Dismiss</button></div>}
+      {response && <div className={`copilot-response${response.refused ? ' copilot-refused' : ''}`} aria-live="polite">
+        <div className="copilot-answer">{response.answer}</div>
+        <div className="copilot-response-meta">
+          <span>{response.provider === 'template' ? 'Template fallback' : 'AI-assisted'} · {response.latency_ms} ms</span>
+          {response.tools_used.length > 0 && <span>Read-only tools: {response.tools_used.join(', ')}</span>}
+        </div>
+        {response.citations.length > 0 && <div className="copilot-citations"><strong>Sources</strong>{response.citations.map((citation) => <span className="citation-chip" key={citation}>{citation}</span>)}</div>}
+      </div>}
+      <div className="copilot-disclaimer">Synthetic-data demonstration only. Verify policy and restrictions before any separate operational decision.</div>
+    </section>
   )
 }
 

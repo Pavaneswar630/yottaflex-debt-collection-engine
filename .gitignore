@@ -11,3 +11,5 @@ htmlcov/
 /ground_truth/
 /reports/detections.csv
 /reports/integrity.json
+/reports/copilot_interactions.jsonl
+/reports/ai_evaluation.jsonl

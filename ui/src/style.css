@@ -215,6 +215,31 @@ h1 { margin: 7px 0 5px; color: var(--ink); font-size: 25px; line-height: 1.2; le
 .compliance-callout > span { font-size: 15px; }
 .compliance-callout strong { color: #52775f; font-size: 8px; }
 .compliance-callout p { margin: 4px 0 0; color: #84988a; font-size: 8px; line-height: 1.5; }
+.copilot-panel { overflow: hidden; }
+.copilot-title { color: #2b3832; font-size: 12px; font-weight: 700; }
+.copilot-title > span { margin-right: 5px; color: #6a9c7d; }
+.copilot-form { padding: 0 19px 15px; }
+.copilot-input-label { display: block; margin-bottom: 6px; color: #75827a; font-size: 8px; font-weight: 600; }
+.copilot-form textarea { width: 100%; min-height: 55px; resize: vertical; padding: 9px 10px; outline: 0; border: 1px solid #e5ebe6; border-radius: 6px; color: #47564e; background: #fcfdfc; font-size: 9px; line-height: 1.5; }
+.copilot-form textarea:focus { border-color: #9dc9ac; box-shadow: 0 0 0 2px rgba(111, 173, 135, .12); }
+.copilot-form textarea::placeholder { color: #a1aaa5; }
+.copilot-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.copilot-form-foot > span { color: #98a39c; font-size: 8px; }
+.button-primary { color: #fff; background: #31775c; }
+.button-primary:hover { background: #245e49; }
+.button-primary > span { margin-left: 5px; }
+.copilot-response { margin: 0 19px 12px; padding: 12px; border: 1px solid #e5eee7; border-radius: 7px; color: #526158; background: #f8fbf8; }
+.copilot-refused { border-color: #f0dedd; color: #96615d; background: #fff9f8; }
+.copilot-answer { color: #56645b; font-size: 9px; line-height: 1.7; white-space: pre-line; overflow-wrap: anywhere; }
+.copilot-refused .copilot-answer { color: #905b57; }
+.copilot-response-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(114, 139, 120, .12); color: #8d9991; font-size: 7px; }
+.copilot-citations { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; }
+.copilot-citations > strong { margin-right: 2px; color: #738178; font-size: 7px; }
+.citation-chip { padding: 4px 6px; border-radius: 4px; color: #567b62; background: #eaf3ec; font: 7px Consolas, monospace; }
+.copilot-disclaimer { padding: 9px 19px; border-top: 1px solid #eff3ef; color: #98a39c; background: #fbfcfb; font-size: 7px; }
+.copilot-error { margin: 0 19px 12px; padding: 10px; border: 1px solid #f1dedd; border-radius: 6px; color: #9d5a56; background: #fff9f8; display: flex; align-items: center; gap: 9px; }
+.copilot-error strong { font-size: 8px; }
+.copilot-error > span { flex: 1; font-size: 8px; overflow-wrap: anywhere; }
 
 .exception-count { padding: 6px 9px; border-radius: 12px; color: #a3625d; background: #fbf0ef; font-size: 8px; white-space: nowrap; }
 .exception-table { min-width: 800px; }
@@ -343,6 +368,9 @@ h1 { margin: 7px 0 5px; color: var(--ink); font-size: 25px; line-height: 1.2; le
   .score-part-top { align-items: flex-start; gap: 3px; flex-direction: column; }
   .score-bar-large { margin-right: 14px; margin-left: 14px; }
   .formula-note { margin-right: 14px; margin-left: 14px; }
+  .copilot-form { padding-right: 14px; padding-left: 14px; }
+  .copilot-response, .copilot-error { margin-right: 14px; margin-left: 14px; }
+  .copilot-disclaimer { padding-right: 14px; padding-left: 14px; }
   .admin-status-grid { grid-template-columns: 1fr; gap: 8px; }
   .admin-status-card { min-height: 70px; }
   .policy-rules { grid-template-columns: 1fr; padding: 0 14px; }

@@ -167,6 +167,18 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Provide a read-only administrator tab. | `ui/src/App.tsx` | UI production build and browser smoke test | `docs/UI.md` ; status: Health, validation, manifest and policy are view-only |
 | Include loading and error states on UI data views. | `ui/src/App.tsx` | UI production build and browser smoke test | `docs/UI.md` ; status: Loading indicators and retryable API error states implemented |
 
+## H55-61 copilot and evaluations
+
+| Brief sentence | Module | Test | Doc |
+|---|---|---|---|
+| Build BM25 retrieval over the policy and docs, chunked by rule ID and with citations. | `knowledge.py` | `tests/test_ai.py::RetrievalTests::test_bm25_retrieves_rule_chunks_with_rule_id_citations`, `make eval-ai` | `docs/AI.md` ; status: Implemented; 18 golden retrieval cases pass |
+| Provide four fixed read-only tools for cases, score breakdown, blocked contacts, and promises. | `copilot.py`, `database.py` | `tests/test_ai.py::CopilotTests::test_tools_are_fixed_read_only_and_return_recorded_case_data` | `docs/AI.md` ; status: Implemented with query-only SQLite connections |
+| Use the SDK only when an API key is configured; otherwise use a template fallback. | `copilot.py`, `api.py` | `tests/test_ai.py::CopilotTests::test_template_fallback_logs_prompt_tool_calls_and_latency`, `tests/test_ai.py::CopilotTests::test_sdk_is_used_only_when_key_is_configured_and_rejects_unsafe_draft` | `docs/AI.md` ; status: Local deterministic fallback by default; optional OpenAI SDK |
+| Reject threats, third-party disclosures, missing dispute notices, and abusive outreach. | `guardrails.py`, `copilot.py` | `tests/test_ai.py::GuardrailTests` | `docs/AI.md` ; status: Deterministic checks reject each unsafe condition |
+| Evaluate at least 15 golden questions and report pass rate. | `tools/eval_ai.py`, `tests/ai_golden_questions.json` | `make eval-ai`, `tests/test_ai.py::RetrievalTests::test_golden_questions_pass_deterministic_retrieval_evaluation` | `reports/ai_evaluation.jsonl` ; status: 18/18 retrieval questions pass; evaluator exits nonzero on misses |
+| Log prompts, tool calls, and latency to JSONL. | `copilot.py` | `tests/test_ai.py::CopilotTests::test_template_fallback_logs_prompt_tool_calls_and_latency` | `reports/copilot_interactions.jsonl`, `docs/AI.md` ; status: Append-only interaction records include prompt, tool names/arguments, and latency |
+| Keep AI from making scoring, scheduling, or compliance decisions. | `copilot.py`, `guardrails.py` | `tests/test_ai.py::CopilotTests`, `tests/test_ai.py::GuardrailTests` | `docs/AI.md` ; status: System instructions and fixed tools are explanatory only; no write or schedule tool is exposed |
+
 ## Numbered workflow rules and generation steps
 
 | Brief sentence | Module | Test | Doc |

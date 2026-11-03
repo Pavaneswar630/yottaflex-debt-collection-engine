@@ -49,7 +49,7 @@ demo:
 	@echo "TODO: end-to-end demo is not implemented yet."
 
 eval-ai:
-	@echo "TODO: AI evaluation is not implemented yet."
+	python tools/eval_ai.py --questions tests/ai_golden_questions.json --log reports/ai_evaluation.jsonl
 
 schema:
 	python tools/generate_schema.py

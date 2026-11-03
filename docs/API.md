@@ -48,8 +48,10 @@ Start the server with `make api`. All endpoints are read-only. For the React UI,
 | `GET /admin/policy` | Current YAML policy configuration. |
 | `GET /admin/validation` | Integrity validation result for the loaded CSV directory. |
 | `GET /admin/manifest` | Dataset seed, row counts, source statement, and checksums. |
+| `POST /copilot/chat` | Grounded policy answer with citations and optional fixed read-only case tools. |
+| `POST /copilot/check-outreach` | Deterministic check for threats, third-party disclosures, abusive language, and the dispute notice. |
 
-Configure the input paths with `YOTTAFLEX_DATA_DIR`, `YOTTAFLEX_DB_PATH`, and `YOTTAFLEX_GROUND_TRUTH_DIR` environment variables. Admin endpoints expose read-only configuration/validation information; no write, policy-edit, or customer-contact endpoint is provided.
+Configure the input paths with `YOTTAFLEX_DATA_DIR`, `YOTTAFLEX_DB_PATH`, and `YOTTAFLEX_GROUND_TRUTH_DIR` environment variables. The copilot endpoints do not write to the collection database or schedule/send contact. Admin endpoints expose read-only configuration/validation information; no write, policy-edit, or customer-contact endpoint is provided. See [docs/AI.md](AI.md) for provider opt-in, guardrails, and logging.
 
 ## Verification
 

@@ -1,0 +1,92 @@
+[
+  {
+    "question": "What local daytime hours are permitted for a customer contact?",
+    "expected_citations": ["[R-CONTACT-01]"],
+    "expected_terms": ["08:00", "19:00"]
+  },
+  {
+    "question": "At what local time does the contact window end?",
+    "expected_citations": ["[R-CONTACT-01]"],
+    "expected_terms": ["19:00"]
+  },
+  {
+    "question": "How many contact attempts are allowed in the rolling week?",
+    "expected_citations": ["[R-CONTACT-02]"],
+    "expected_terms": ["3", "7"]
+  },
+  {
+    "question": "Do scheduled contacts count toward the account contact cap?",
+    "expected_citations": ["[R-CONTACT-02]"],
+    "expected_terms": ["scheduled_contacts_count_toward_cap", "true"]
+  },
+  {
+    "question": "How should a customer debt dispute affect outbound collection?",
+    "expected_citations": ["[R-DISPUTE-01]"],
+    "expected_terms": ["suppress_dunning", "route_to_review"]
+  },
+  {
+    "question": "Which suppression condition is checked first?",
+    "expected_citations": ["[R-PAIDOFF-01]"],
+    "expected_terms": ["R-PAIDOFF-01", "R-DISPUTE-01"]
+  },
+  {
+    "question": "What happens when a hardship request is active?",
+    "expected_citations": ["[R-HARDSHIP-01]"],
+    "expected_terms": ["pause_outbound_contact", "pause_automated_escalation"]
+  },
+  {
+    "question": "What does a cease-contact instruction require?",
+    "expected_citations": ["[R-CEASE-01]"],
+    "expected_terms": ["block_outbound_contact", "route_to_review"]
+  },
+  {
+    "question": "How is priority score weighted across balance age and risk?",
+    "expected_citations": ["[R-SCORE-01]"],
+    "expected_terms": ["0.4", "0.35", "0.25"]
+  },
+  {
+    "question": "What priority tiers and score cutoffs are documented?",
+    "expected_citations": ["[R-SCORE-01]"],
+    "expected_terms": ["p1_min_score", "p2_min_score", "70", "40"]
+  },
+  {
+    "question": "When does the workflow create a collection case?",
+    "expected_citations": ["[R-CASE-01]"],
+    "expected_terms": ["dpd_threshold", "1"]
+  },
+  {
+    "question": "What allocation method is used for posted payments?",
+    "expected_citations": ["[R-ALLOC-01]"],
+    "expected_terms": ["oldest_due_first"]
+  },
+  {
+    "question": "Can a payment be split across installments?",
+    "expected_citations": ["[R-ALLOC-01]"],
+    "expected_terms": ["allow_partial_allocation", "true"]
+  },
+  {
+    "question": "How is a promise amount sized from verified arrears?",
+    "expected_citations": ["[R-PROMISE-01]"],
+    "expected_terms": ["amount_percent_of_arrears", "70"]
+  },
+  {
+    "question": "What is the tolerance for reconciling payment promises?",
+    "expected_citations": ["[R-RECON-01]"],
+    "expected_terms": ["tolerance_pct", "5"]
+  },
+  {
+    "question": "How are payment promise outcomes determined?",
+    "expected_citations": ["[R-RECON-01]"],
+    "expected_terms": ["kept", "partial", "broken"]
+  },
+  {
+    "question": "Are customer records based on external or personal data?",
+    "expected_citations": ["[docs/GENERATION.md#synthetic-dataset-generation]"],
+    "expected_terms": ["synthetic"]
+  },
+  {
+    "question": "Which read-only endpoints expose case history and decision logs?",
+    "expected_citations": ["[docs/API.md#api-endpoints]"],
+    "expected_terms": ["/cases/{id}/timeline", "/decisions"]
+  }
+]
