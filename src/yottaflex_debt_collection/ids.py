@@ -16,6 +16,7 @@ _GLOBAL_ID_PREFIXES = {
     "dispute": "DIS-2026",
     "hardship_request": "HRS-2026",
     "decision_log": "DEC-2026",
+    "state_event": "STE-2026",
 }
 _LOAN_ID = re.compile(r"LOAN-2026-\d{6}\Z")
 _CASE_ID = re.compile(r"COL-2026-\d{6}\Z")

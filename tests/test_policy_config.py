@@ -24,6 +24,8 @@ class PolicyConfigTests(unittest.TestCase):
         required_rules = {
             "R-CONTACT-01",
             "R-CONTACT-02",
+            "R-CONTACT-03",
+            "R-PROMISE-01",
             "R-DISPUTE-01",
             "R-HARDSHIP-01",
             "R-CEASE-01",
@@ -100,6 +102,30 @@ class PolicyConfigTests(unittest.TestCase):
     def test_reconciliation_tolerance_and_grace_period_are_explicit(self) -> None:
         self.assertEqual(self.policy["reconcile"]["tolerance_pct"], 5)
         self.assertEqual(self.policy["reconcile"]["grace_days"], 2)
+
+    def test_contact_outcomes_and_promise_amounts_are_rule_derived(self) -> None:
+        self.assertEqual(
+            self.policy["rules"]["R-CONTACT-03"]["case_sequence_cycle"],
+            [
+                "connected",
+                "connected",
+                "connected",
+                "connected",
+                "connected",
+                "voicemail",
+                "voicemail",
+                "no_answer",
+                "no_answer",
+                "refused",
+            ],
+        )
+        self.assertEqual(
+            self.policy["rules"]["R-PROMISE-01"]["amount_percent_of_arrears"], 70
+        )
+        self.assertEqual(self.policy["rules"]["R-PROMISE-01"]["promise_due_days"], 7)
+        self.assertTrue(self.policy["reconcile"]["outcomes"]["kept"])
+        self.assertTrue(self.policy["reconcile"]["outcomes"]["partial"])
+        self.assertTrue(self.policy["reconcile"]["outcomes"]["broken"])
 
 
 if __name__ == "__main__":

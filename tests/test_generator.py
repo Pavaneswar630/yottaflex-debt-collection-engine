@@ -1,6 +1,7 @@
 """Tests for deterministic records, schedules, labels, and payment allocation."""
 
 import csv
+import copy
 import hashlib
 import unittest
 from collections import Counter
@@ -16,8 +17,10 @@ from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
     SEGMENT_PROBABILITIES,
     _first_matching_suppression_rule,
+    _promise_outcome,
     _schedule_contact_decision,
     generate_dataset,
+    validate_dataset,
 )
 from yottaflex_debt_collection.schema_loader import load_dictionary
 from yottaflex_debt_collection.settings import AS_OF_DATE
@@ -637,6 +640,66 @@ class GeneratorTests(unittest.TestCase):
         assert allowed_schedule is not None
         self.assertEqual(allowed_schedule.tzinfo, ZoneInfo("America/New_York"))
         self.assertEqual(allowed_schedule.hour, 8)
+
+    def test_contact_promises_reconciliation_and_state_lifecycles(self) -> None:
+        dataset = generate_dataset(1_000, 20261022)
+        self.assertEqual(
+            {row["status"] for row in dataset["promise_to_pay"]},
+            {"KEPT", "PARTIAL", "BROKEN"},
+        )
+        self.assertEqual(
+            {row["outcome"] for row in dataset["contact_attempt"]},
+            {"connected", "no_answer", "voicemail", "refused", "policy_blocked"},
+        )
+
+        attempts_by_case = {
+            str(row["case_id"]): row for row in dataset["contact_attempt"]
+        }
+        promises_by_case = {
+            str(row["case_id"]): row for row in dataset["promise_to_pay"]
+        }
+        for case in dataset["collection_case"]:
+            attempt = attempts_by_case[str(case["case_id"])]
+            promise = promises_by_case.get(str(case["case_id"]))
+            if attempt["outcome"] == "connected":
+                if promise is not None:
+                    arrears_at_promise, _ = _reference_delinquency(
+                        str(case["loan_id"]),
+                        datetime.fromisoformat(str(promise["recorded_at"])).date(),
+                        dataset["installment"],
+                        dataset["payment_allocation"],
+                        dataset["payment"],
+                    )
+                    expected_amount = max(1, arrears_at_promise * 70 // 100)
+                    self.assertEqual(int(promise["promised_amount"]), expected_amount)
+            else:
+                self.assertIsNone(promise)
+
+        state_rows_by_promise: dict[str, list[dict[str, str | int | bool | None]]] = {}
+        for event in dataset["state_event"]:
+            if event["entity_type"] == "promise_to_pay":
+                state_rows_by_promise.setdefault(str(event["promise_id"]), []).append(event)
+        for promise in dataset["promise_to_pay"]:
+            events = state_rows_by_promise[str(promise["promise_id"])]
+            self.assertEqual(events[0]["new_state"], "PENDING")
+            self.assertEqual(events[-1]["new_state"], promise["status"])
+
+        corrupted = copy.deepcopy(dataset)
+        transition = next(
+            event
+            for event in corrupted["state_event"]
+            if event["entity_type"] == "promise_to_pay"
+            and event["previous_state"] == "PENDING"
+        )
+        transition["previous_state"] = "BROKEN"
+        with self.assertRaisesRegex(ValueError, "previous_state"):
+            validate_dataset(corrupted)
+
+    def test_promise_outcome_uses_exact_tolerance_boundary(self) -> None:
+        self.assertEqual(_promise_outcome(9_500, 10_000, 5), "KEPT")
+        self.assertEqual(_promise_outcome(9_499, 10_000, 5), "PARTIAL")
+        self.assertEqual(_promise_outcome(1, 10_000, 5), "PARTIAL")
+        self.assertEqual(_promise_outcome(0, 10_000, 5), "BROKEN")
 
     def test_invalid_scale_is_rejected(self) -> None:
         for invalid in (0, -1, True):

@@ -16,6 +16,23 @@ rules:
     period_days: 7
     scope: account
     scheduled_contacts_count_toward_cap: true
+  R-CONTACT-03:
+    desc: Allowed synthetic contact outcomes follow the documented immutable case-sequence cycle, independently of latent behavior labels.
+    case_sequence_cycle:
+      - connected
+      - connected
+      - connected
+      - connected
+      - connected
+      - voicemail
+      - voicemail
+      - no_answer
+      - no_answer
+      - refused
+  R-PROMISE-01:
+    desc: Connected contacts may create a promise for the configured share of arrears verified on the promise date.
+    amount_percent_of_arrears: 70
+    promise_due_days: 7
   R-DISPUTE-01:
     desc: Disputed debt suppresses dunning and routes the case to review.
     statuses: [disputed, under_review]
@@ -96,3 +113,7 @@ scoring:
 reconcile:
   tolerance_pct: 5
   grace_days: 2
+  outcomes:
+    kept: Sum of eligible posted payments is at least promised amount times (1 - tolerance_pct / 100).
+    partial: Sum is greater than zero but below the kept threshold after the grace period.
+    broken: No eligible posted payment exists after the grace period.

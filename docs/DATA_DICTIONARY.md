@@ -173,12 +173,12 @@ Customer payment commitment recorded against a collection case.
 | `case_id` | `VARCHAR(32)` | Yes | — | none | No | FK to collection_case.case_id | Must reference an existing collection case. |
 | `promised_amount` | `BIGINT` | Yes | — | integer cents | No | — | Must be greater than zero and not exceed the case's verified arrears; value is integer cents. |
 | `promised_date` | `DATE` | Yes | — | calendar date | No | — | Must be on or after recorded_at's calendar date. |
-| `status` | `VARCHAR(12)` | Yes | `pending`, `kept`, `broken`, `cancelled` | none | No | — | Must match subsequent reconciled payments and the promise lifecycle. |
+| `status` | `VARCHAR(12)` | Yes | `PENDING`, `KEPT`, `PARTIAL`, `BROKEN`, `CANCELLED` | none | No | — | PENDING while the deadline is in the future; afterward KEPT, PARTIAL, or BROKEN is derived from eligible posted payments and configured tolerance. |
 | `recorded_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
-| `resolved_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | Required when status is kept, broken, or cancelled; must not precede recorded_at. |
+| `resolved_at` | `TIMESTAMPTZ` | No | — | UTC timestamp | No | — | Null only while PENDING; otherwise must not precede recorded_at. |
 
 **Additional table constraints:**
-- `promise_resolved_state`: `CHECK ((status = 'pending') = (resolved_at IS NULL))`.
+- `promise_resolved_state`: `CHECK ((status = 'PENDING') = (resolved_at IS NULL))`.
 - `promise_resolved_order`: `CHECK (resolved_at IS NULL OR resolved_at >= recorded_at)`.
 
 ### `payment`
@@ -294,6 +294,25 @@ Append-only explainability log for policy decisions and exceptions.
 | `priority_score` | `NUMERIC(5,2)` | No | — | points (0-100) | No | — | When present, must be within 0 to 100. |
 | `as_of_date` | `DATE` | Yes | — | calendar date | No | — | Must be the fixed evaluation as-of date. |
 | `created_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be a valid timestamp with timezone. |
+
+### `state_event`
+
+Append-only lifecycle event for a collection case or promise-to-pay.
+
+| Field | Type | Required | Allowed values | Unit | Unique | Key / reference | Validation rule |
+|---|---|---:|---|---|---:|---|---|
+| `state_event_id` | `VARCHAR(32)` | Yes | — | none | Yes | PK | Must match STE-2026- followed by a six-digit zero-padded counter. |
+| `entity_type` | `VARCHAR(20)` | Yes | `collection_case`, `promise_to_pay` | none | No | — | Must identify which lifecycle is transitioning and match the populated entity foreign key. |
+| `case_id` | `VARCHAR(32)` | No | — | none | No | FK to collection_case.case_id | Required only for a collection_case event; references its case. |
+| `promise_id` | `VARCHAR(64)` | No | — | none | No | FK to promise_to_pay.promise_id | Required only for a promise_to_pay event; references its promise. |
+| `previous_state` | `VARCHAR(16)` | No | `open`, `paused`, `resolved`, `closed`, `PENDING`, `KEPT`, `PARTIAL`, `BROKEN`, `CANCELLED` | none | No | — | Null for the initial event; otherwise must equal the preceding event's new_state. |
+| `new_state` | `VARCHAR(16)` | Yes | `open`, `paused`, `resolved`, `closed`, `PENDING`, `KEPT`, `PARTIAL`, `BROKEN`, `CANCELLED` | none | No | — | Must be an allowed next state for entity_type and pass the lifecycle transition validator. |
+| `changed_at` | `TIMESTAMPTZ` | Yes | — | UTC timestamp | No | — | Must be chronological for the entity and not precede its creation. |
+| `reason_code` | `VARCHAR(40)` | Yes | — | none | No | — | Must identify the policy or lifecycle cause for the transition. |
+| `actor_type` | `VARCHAR(24)` | Yes | `system`, `operations_analyst`, `compliance_reviewer`, `administrator` | none | No | — | Must identify the responsible actor. |
+
+**Additional table constraints:**
+- `state_event_exactly_one_target`: `CHECK ((case_id IS NOT NULL AND promise_id IS NULL AND entity_type = 'collection_case') OR (case_id IS NULL AND promise_id IS NOT NULL AND entity_type = 'promise_to_pay'))`.
 
 ## Relationships and cardinality
 

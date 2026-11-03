@@ -182,6 +182,42 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "as_of_date",
         "created_at",
     ),
+    "contact_attempt": (
+        "contact_attempt_id",
+        "case_id",
+        "attempted_at",
+        "channel",
+        "outcome",
+        "agent_id",
+        "created_at",
+    ),
+    "promise_to_pay": (
+        "promise_id",
+        "case_id",
+        "promised_amount",
+        "promised_date",
+        "status",
+        "recorded_at",
+        "resolved_at",
+    ),
+    "promise_reconciliation": (
+        "promise_id",
+        "payment_id",
+        "reconciled_amount",
+        "reconciled_at",
+        "match_status",
+    ),
+    "state_event": (
+        "state_event_id",
+        "entity_type",
+        "case_id",
+        "promise_id",
+        "previous_state",
+        "new_state",
+        "changed_at",
+        "reason_code",
+        "actor_type",
+    ),
 }
 
 
@@ -567,6 +603,426 @@ def _schedule_contact_decision(
     }
     return decision, scheduled_at
 
+
+def _suppression_rule_at(
+    loan: Row,
+    account: Row,
+    disputes: list[Row],
+    hardship_requests: list[Row],
+    preference: Row,
+    when: date,
+    policy: dict[str, Any],
+) -> str | None:
+    loan_at_date = dict(loan)
+    if loan["paid_off_date"] is None or date.fromisoformat(
+        str(loan["paid_off_date"])
+    ) > when:
+        loan_at_date["loan_status"] = "active"
+
+    active_disputes: list[Row] = []
+    for dispute in disputes:
+        filed_at = date.fromisoformat(str(dispute["filed_at"])[:10])
+        resolved_at = (
+            date.fromisoformat(str(dispute["resolved_at"])[:10])
+            if dispute["resolved_at"] is not None
+            else None
+        )
+        if (
+            dispute["status"] in {"disputed", "under_review", "resolved"}
+            and filed_at <= when
+            and (resolved_at is None or resolved_at > when)
+        ):
+            active_disputes.append({**dispute, "status": "under_review"})
+
+    active_hardships = [
+        request
+        for request in hardship_requests
+        if request["status"] in {"requested", "approved"}
+        and date.fromisoformat(str(request["requested_at"])[:10]) <= when
+    ]
+    account_at_date = dict(account)
+    account_at_date["hardship_status"] = (
+        str(active_hardships[-1]["status"]) if active_hardships else "none"
+    )
+    return _first_matching_suppression_rule(
+        loan_at_date,
+        account_at_date,
+        active_disputes,
+        active_hardships,
+        preference,
+        when,
+        policy,
+    )
+
+
+def _make_contact_attempt(
+    case: Row,
+    loan: Row,
+    account: Row,
+    preference: Row,
+    disputes: list[Row],
+    hardship_requests: list[Row],
+    contact_attempt_id: str,
+    policy: dict[str, Any],
+) -> Row:
+    """Create one historical contact event using dated policy and segment rules."""
+    attempt_date = date.fromisoformat(str(case["opened_at"])[:10])
+    zone = ZoneInfo(str(preference["timezone"]))
+    policy_rule = policy["rules"]["R-CONTACT-01"]
+    start_time = max(
+        time.fromisoformat(str(preference["allowed_start_time"])),
+        time.fromisoformat(str(policy_rule["start_local"])),
+    )
+    attempted_at = datetime.combine(attempt_date, start_time, tzinfo=zone)
+    effective_from = date.fromisoformat(str(preference["effective_from"]))
+    effective_to = (
+        date.fromisoformat(str(preference["effective_to"]))
+        if preference["effective_to"] is not None
+        else None
+    )
+    active_preference = effective_from <= attempt_date and (
+        effective_to is None or effective_to >= attempt_date
+    )
+    active_suppression = _suppression_rule_at(
+        loan,
+        account,
+        disputes,
+        hardship_requests,
+        preference,
+        attempt_date,
+        policy,
+    )
+    allowed_end = min(
+        time.fromisoformat(str(preference["allowed_end_time"])),
+        time.fromisoformat(str(policy_rule["end_local"])),
+    )
+    if (
+        not active_preference
+        or bool(preference["do_not_contact"])
+        or active_suppression is not None
+        or start_time >= allowed_end
+    ):
+        outcome = "policy_blocked"
+    else:
+        outcome_cycle = policy["rules"]["R-CONTACT-03"]["case_sequence_cycle"]
+        case_sequence = int(str(case["case_id"]).rsplit("-", 1)[1])
+        outcome = str(outcome_cycle[(case_sequence - 1) % len(outcome_cycle)])
+    return {
+        "contact_attempt_id": contact_attempt_id,
+        "case_id": case["case_id"],
+        "attempted_at": attempted_at.isoformat(),
+        "channel": preference["preferred_channel"],
+        "outcome": outcome,
+        "agent_id": None,
+        "created_at": UTC_GENERATED_AT,
+    }
+
+
+def _state_event(
+    ids: IdFactory,
+    entity_type: str,
+    case_id: str | None,
+    promise_id: str | None,
+    previous_state: str | None,
+    new_state: str,
+    changed_at: str,
+    reason_code: str,
+) -> Row:
+    return {
+        "state_event_id": ids.next_id("state_event"),
+        "entity_type": entity_type,
+        "case_id": case_id,
+        "promise_id": promise_id,
+        "previous_state": previous_state,
+        "new_state": new_state,
+        "changed_at": changed_at,
+        "reason_code": reason_code,
+        "actor_type": "system",
+    }
+
+
+def _case_suppression_date(
+    case: Row,
+    loan: Row,
+    preference: Row,
+    disputes: list[Row],
+    hardship_requests: list[Row],
+) -> date:
+    rule_id = case["suppression_rule_id"]
+    if rule_id == "R-PAIDOFF-01":
+        return date.fromisoformat(str(loan["paid_off_date"]))
+    if rule_id == "R-DISPUTE-01":
+        candidates = [
+            date.fromisoformat(str(row["filed_at"])[:10])
+            for row in disputes
+            if row["status"] in {"disputed", "under_review"}
+            and date.fromisoformat(str(row["filed_at"])[:10])
+            <= AS_OF_DATE
+            and (
+                row["resolved_at"] is None
+                or date.fromisoformat(str(row["resolved_at"])[:10]) > AS_OF_DATE
+            )
+        ]
+    elif rule_id == "R-HARDSHIP-01":
+        candidates = [
+            date.fromisoformat(str(row["requested_at"])[:10])
+            for row in hardship_requests
+            if row["status"] in {"requested", "approved"}
+            and date.fromisoformat(str(row["requested_at"])[:10]) <= AS_OF_DATE
+        ]
+    elif rule_id == "R-CEASE-01":
+        candidates = [date.fromisoformat(str(preference["effective_from"]))]
+    else:
+        return date.fromisoformat(str(case["opened_at"])[:10])
+    if not candidates:
+        return date.fromisoformat(str(case["opened_at"])[:10])
+    return min(candidates)
+
+
+def _case_state_events(
+    ids: IdFactory,
+    cases: list[Row],
+    loans_by_id: dict[str, Row],
+    preferences_by_account: dict[str, Row],
+    disputes_by_account: dict[str, list[Row]],
+    hardships_by_account: dict[str, list[Row]],
+) -> list[Row]:
+    events: list[Row] = []
+    for case in cases:
+        case_id = str(case["case_id"])
+        loan_id = str(case["loan_id"])
+        account_id = str(case["account_id"])
+        opened_date = date.fromisoformat(str(case["opened_at"])[:10])
+        final_status = str(case["status"])
+        rule_id = case["suppression_rule_id"]
+        if rule_id is None:
+            events.append(
+                _state_event(
+                    ids,
+                    "collection_case",
+                    case_id,
+                    None,
+                    None,
+                    final_status,
+                    str(case["opened_at"]),
+                    "CASE_OPENED",
+                )
+            )
+            continue
+
+        suppression_date = _case_suppression_date(
+            case,
+            loans_by_id[loan_id],
+            preferences_by_account[account_id],
+            disputes_by_account.get(account_id, []),
+            hardships_by_account.get(account_id, []),
+        )
+        if suppression_date <= opened_date:
+            events.append(
+                _state_event(
+                    ids,
+                    "collection_case",
+                    case_id,
+                    None,
+                    None,
+                    final_status,
+                    str(case["opened_at"]),
+                    str(rule_id),
+                )
+            )
+        else:
+            events.extend(
+                (
+                    _state_event(
+                        ids,
+                        "collection_case",
+                        case_id,
+                        None,
+                        None,
+                        "open",
+                        str(case["opened_at"]),
+                        "CASE_OPENED",
+                    ),
+                    _state_event(
+                        ids,
+                        "collection_case",
+                        case_id,
+                        None,
+                        "open",
+                        final_status,
+                        _timestamp(suppression_date),
+                        str(rule_id),
+                    ),
+                )
+            )
+    return events
+
+
+def _promise_outcome(
+    paid_amount: int, promised_amount: int, tolerance_pct: int
+) -> str:
+    if paid_amount * 100 >= promised_amount * (100 - tolerance_pct):
+        return "KEPT"
+    if paid_amount > 0:
+        return "PARTIAL"
+    return "BROKEN"
+
+
+def _create_promises(
+    attempts: list[Row],
+    cases_by_id: dict[str, Row],
+    installments_by_loan: dict[str, list[Row]],
+    allocations_by_loan: dict[str, list[Row]],
+    payments_by_account: dict[str, list[Row]],
+    preferences_by_account: dict[str, Row],
+    allocations: list[Row],
+    installments_by_id: dict[str, Row],
+    ids: IdFactory,
+    policy: dict[str, Any],
+) -> tuple[list[Row], list[Row], list[Row]]:
+    promises: list[Row] = []
+    reconciliations: list[Row] = []
+    state_events: list[Row] = []
+    allocation_amounts: dict[tuple[str, str], int] = {}
+    for allocation in allocations:
+        loan_id = str(
+            installments_by_id[str(allocation["installment_id"])]["loan_id"]
+        )
+        key = (loan_id, str(allocation["payment_id"]))
+        allocation_amounts[key] = allocation_amounts.get(key, 0) + int(
+            allocation["allocated_amount"]
+        )
+
+    promise_policy = policy["rules"]["R-PROMISE-01"]
+    reconcile_policy = policy["reconcile"]
+    for attempt in attempts:
+        if attempt["outcome"] != "connected":
+            continue
+        case = cases_by_id[str(attempt["case_id"])]
+        loan_id = str(case["loan_id"])
+        account_id = str(case["account_id"])
+        loan_payments = payments_by_account.get(account_id, [])
+        recorded_at = datetime.fromisoformat(str(attempt["attempted_at"]))
+        arrears, _ = calculate_delinquency(
+            installments_by_loan[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            loan_payments,
+            recorded_at.date(),
+        )
+        if arrears <= 0:
+            continue
+
+        amount_percent = int(promise_policy["amount_percent_of_arrears"])
+        promised_amount = max(1, arrears * amount_percent // 100)
+        promised_date = recorded_at.date() + timedelta(
+            days=int(promise_policy["promise_due_days"])
+        )
+        grace_end_date = promised_date + timedelta(
+            days=int(reconcile_policy["grace_days"])
+        )
+        grace_end = datetime.combine(
+            grace_end_date,
+            time.max,
+            tzinfo=ZoneInfo(str(preferences_by_account[account_id]["timezone"])),
+        )
+        payment_candidates: list[tuple[datetime, str, int]] = []
+        for payment in loan_payments:
+            if payment["status"] != "posted" or payment["posted_at"] is None:
+                continue
+            posted_at = datetime.fromisoformat(str(payment["posted_at"]))
+            allocated_amount = allocation_amounts.get(
+                (loan_id, str(payment["payment_id"])), 0
+            )
+            if (
+                allocated_amount > 0
+                and posted_at > recorded_at
+                and posted_at <= grace_end
+                and posted_at.date() <= AS_OF_DATE
+            ):
+                payment_candidates.append(
+                    (posted_at, str(payment["payment_id"]), allocated_amount)
+                )
+        payment_candidates.sort()
+
+        promise_id = ids.next_promise_id(str(case["case_id"]))
+        cumulative = 0
+        kept_at: datetime | None = None
+        for posted_at, payment_id, paid_amount in payment_candidates:
+            cumulative += paid_amount
+            if (
+                cumulative * 100
+                >= promised_amount * (100 - int(reconcile_policy["tolerance_pct"]))
+                and kept_at is None
+            ):
+                kept_at = posted_at
+            match_status = (
+                "excess"
+                if cumulative > promised_amount
+                else "matched"
+                if cumulative * 100
+                >= promised_amount * (100 - int(reconcile_policy["tolerance_pct"]))
+                else "partial"
+            )
+            reconciliations.append(
+                {
+                    "promise_id": promise_id,
+                    "payment_id": payment_id,
+                    "reconciled_amount": paid_amount,
+                    "reconciled_at": posted_at.isoformat(),
+                    "match_status": match_status,
+                }
+            )
+
+        if kept_at is not None:
+            status = "KEPT"
+            resolved_at = kept_at.isoformat()
+        elif grace_end_date <= AS_OF_DATE:
+            status = _promise_outcome(
+                cumulative,
+                promised_amount,
+                int(reconcile_policy["tolerance_pct"]),
+            )
+            resolved_at = grace_end.isoformat()
+        else:
+            status = "PENDING"
+            resolved_at = None
+
+        promise = {
+            "promise_id": promise_id,
+            "case_id": case["case_id"],
+            "promised_amount": promised_amount,
+            "promised_date": promised_date.isoformat(),
+            "status": status,
+            "recorded_at": recorded_at.isoformat(),
+            "resolved_at": resolved_at,
+        }
+        promises.append(promise)
+        state_events.append(
+            _state_event(
+                ids,
+                "promise_to_pay",
+                None,
+                promise_id,
+                None,
+                "PENDING",
+                recorded_at.isoformat(),
+                "PROMISE_RECORDED",
+            )
+        )
+        if status != "PENDING":
+            state_events.append(
+                _state_event(
+                    ids,
+                    "promise_to_pay",
+                    None,
+                    promise_id,
+                    "PENDING",
+                    status,
+                    str(resolved_at),
+                    "PROMISE_RECONCILED",
+                )
+            )
+    return promises, reconciliations, state_events
 
 
 def generate_dataset(
@@ -1042,7 +1498,29 @@ def generate_dataset(
                     }
                 )
 
-    scheduled_history: list[tuple[str, datetime]] = []
+    cases_by_id = {str(row["case_id"]): row for row in collection_cases}
+    generated_loans_by_id = {str(row["loan_id"]): row for row in loans_rows}
+    contact_attempts = [
+        _make_contact_attempt(
+            case,
+            generated_loans_by_id[str(case["loan_id"])],
+            accounts_by_id[str(case["account_id"])],
+            preferences_by_account[str(case["account_id"])],
+            disputes_by_account.get(str(case["account_id"]), []),
+            hardship_by_account.get(str(case["account_id"]), []),
+            ids.next_contact_attempt_id(str(case["case_id"])),
+            policy,
+        )
+        for case in collection_cases
+    ]
+    scheduled_history = [
+        (
+            str(cases_by_id[str(attempt["case_id"])]["account_id"]),
+            datetime.fromisoformat(str(attempt["attempted_at"])),
+        )
+        for attempt in contact_attempts
+        if attempt["outcome"] != "policy_blocked"
+    ]
     decision_logs: list[Row] = []
     for case in sorted(
         collection_cases,
@@ -1061,6 +1539,28 @@ def generate_dataset(
             scheduled_at.isoformat() if scheduled_at is not None else None
         )
 
+    promises, promise_reconciliations, promise_state_events = _create_promises(
+        contact_attempts,
+        cases_by_id,
+        installments_by_loan,
+        allocations_by_loan,
+        payments_by_account,
+        preferences_by_account,
+        allocations,
+        {str(row["installment_id"]): row for row in installments},
+        ids,
+        policy,
+    )
+    state_events = _case_state_events(
+        ids,
+        collection_cases,
+        generated_loans_by_id,
+        preferences_by_account,
+        disputes_by_account,
+        hardship_by_account,
+    )
+    state_events.extend(promise_state_events)
+
     dataset: Dataset = {
         "customer": customers,
         "account": accounts,
@@ -1074,6 +1574,10 @@ def generate_dataset(
         "hardship_request": hardship_requests,
         "payment": payments,
         "payment_allocation": allocations,
+        "contact_attempt": contact_attempts,
+        "promise_to_pay": promises,
+        "promise_reconciliation": promise_reconciliations,
+        "state_event": state_events,
         "latent_segments": [
             {"loan_id": loan_id, "segment": segment_by_loan[loan_id]}
             for loan_id in (str(row["loan_id"]) for row in loans_rows)
@@ -1099,6 +1603,9 @@ def validate_dataset(dataset: Dataset) -> None:
         "hardship_request": "hardship_request_id",
         "payment": "payment_id",
         "decision_log": "decision_id",
+        "contact_attempt": "contact_attempt_id",
+        "promise_to_pay": "promise_id",
+        "state_event": "state_event_id",
     }
     for table, field in id_fields.items():
         ids = [str(row[field]) for row in dataset[table]]
@@ -1174,6 +1681,9 @@ def validate_dataset(dataset: Dataset) -> None:
 
     payment_account = {
         str(row["payment_id"]): str(row["account_id"]) for row in dataset["payment"]
+    }
+    payments_by_id = {
+        str(row["payment_id"]): row for row in dataset["payment"]
     }
     if len(payment_account) != len(dataset["payment"]):
         raise ValueError("payment primary keys are not unique")
@@ -1446,15 +1956,24 @@ def validate_dataset(dataset: Dataset) -> None:
             ):
                 raise ValueError("blocked contact decision is inconsistent")
 
-    scheduled_decisions = sorted(
+    contact_activity = [
         (
+            str(cases_by_id[str(attempt["case_id"])]["account_id"]),
+            datetime.fromisoformat(str(attempt["attempted_at"])),
+        )
+        for attempt in dataset["contact_attempt"]
+        if attempt["outcome"] != "policy_blocked"
+    ]
+    scheduled_decisions = sorted(
+        [
             (
                 str(cases_by_id[case_id]["account_id"]),
                 datetime.fromisoformat(str(cases_by_id[case_id]["next_action_at"])),
             )
             for case_id, rows in decisions_by_case.items()
             if rows[0]["decision_type"] == "contact_allowed"
-        ),
+        ]
+        + contact_activity,
         key=lambda item: item[1],
     )
     cap = policy["rules"]["R-CONTACT-02"]
@@ -1468,6 +1987,292 @@ def validate_dataset(dataset: Dataset) -> None:
         )
         if in_window >= cap["max_attempts"]:
             raise ValueError("scheduled contacts exceed the rolling weekly account cap")
+
+    attempts_by_case: dict[str, list[Row]] = {}
+    allowed_contact_outcomes = {
+        "connected",
+        "no_answer",
+        "voicemail",
+        "invalid_contact",
+        "refused",
+        "dispute_raised",
+        "policy_blocked",
+    }
+    for attempt in dataset["contact_attempt"]:
+        case_id = str(attempt["case_id"])
+        if case_id not in cases_by_id:
+            raise ValueError("contact attempt references an unknown case")
+        if attempt["outcome"] not in allowed_contact_outcomes:
+            raise ValueError("contact attempt has an unsupported outcome")
+        case = cases_by_id[case_id]
+        preference = preferences_by_account[str(case["account_id"])]
+        attempted_at = datetime.fromisoformat(str(attempt["attempted_at"]))
+        local_at = attempted_at.astimezone(ZoneInfo(str(preference["timezone"])))
+        attempt_date = local_at.date()
+        if attempt_date != date.fromisoformat(str(case["opened_at"])[:10]):
+            raise ValueError("contact attempt must follow the case-open event date")
+        if attempt["channel"] != preference["preferred_channel"]:
+            raise ValueError("contact attempt channel does not match the effective preference")
+        active_from = date.fromisoformat(str(preference["effective_from"]))
+        active_to = (
+            date.fromisoformat(str(preference["effective_to"]))
+            if preference["effective_to"] is not None
+            else None
+        )
+        active_preference = active_from <= attempt_date and (
+            active_to is None or active_to >= attempt_date
+        )
+        contact_rule = policy["rules"]["R-CONTACT-01"]
+        local_clock = local_at.timetz().replace(tzinfo=None)
+        within_window = (
+            time.fromisoformat(str(contact_rule["start_local"]))
+            <= local_clock
+            < time.fromisoformat(str(contact_rule["end_local"]))
+            and time.fromisoformat(str(preference["allowed_start_time"]))
+            <= local_clock
+            < time.fromisoformat(str(preference["allowed_end_time"]))
+        )
+        if attempt["outcome"] != "policy_blocked":
+            suppression_rule = _suppression_rule_at(
+                loans_by_id[str(case["loan_id"])],
+                accounts_by_id[str(case["account_id"])],
+                disputes_by_account.get(str(case["account_id"]), []),
+                hardships_by_account.get(str(case["account_id"]), []),
+                preference,
+                attempt_date,
+                policy,
+            )
+            if not active_preference or not within_window or suppression_rule is not None:
+                raise ValueError("contact was recorded despite an active restriction")
+            outcome_cycle = policy["rules"]["R-CONTACT-03"]["case_sequence_cycle"]
+            case_sequence = int(case_id.rsplit("-", 1)[1])
+            expected_outcome = outcome_cycle[(case_sequence - 1) % len(outcome_cycle)]
+            if attempt["outcome"] != expected_outcome:
+                raise ValueError("contact outcome does not follow the documented segment rule")
+        attempts_by_case.setdefault(case_id, []).append(attempt)
+    if set(attempts_by_case) != set(cases_by_id) or any(
+        len(rows) != 1 for rows in attempts_by_case.values()
+    ):
+        raise ValueError("each collection case must have exactly one contact attempt record")
+
+    promises_by_case: dict[str, list[Row]] = {}
+    promises_by_id: dict[str, Row] = {}
+    for promise in dataset["promise_to_pay"]:
+        promise_id = str(promise["promise_id"])
+        case_id = str(promise["case_id"])
+        if case_id not in cases_by_id or promise_id in promises_by_id:
+            raise ValueError("promise references an unknown case or duplicates an ID")
+        case = cases_by_id[case_id]
+        attempt = attempts_by_case[case_id][0]
+        if attempt["outcome"] != "connected":
+            raise ValueError("promise requires a connected contact attempt")
+        recorded_at = datetime.fromisoformat(str(promise["recorded_at"]))
+        if recorded_at != datetime.fromisoformat(str(attempt["attempted_at"])):
+            raise ValueError("promise record time must match its contact attempt")
+        loan_id = str(case["loan_id"])
+        arrears_at_promise, _ = calculate_delinquency(
+            grouped_installments[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(str(case["account_id"]), []),
+            recorded_at.date(),
+        )
+        promise_policy = policy["rules"]["R-PROMISE-01"]
+        expected_amount = (
+            arrears_at_promise
+            * int(promise_policy["amount_percent_of_arrears"])
+            // 100
+        )
+        if (
+            arrears_at_promise <= 0
+            or int(promise["promised_amount"]) != max(1, expected_amount)
+        ):
+            raise ValueError("promise amount does not match verified promise-date arrears")
+        expected_due_date = recorded_at.date() + timedelta(
+            days=int(promise_policy["promise_due_days"])
+        )
+        if promise["promised_date"] != expected_due_date.isoformat():
+            raise ValueError("promise due date does not match policy")
+        if promise["status"] not in {
+            "PENDING",
+            "KEPT",
+            "PARTIAL",
+            "BROKEN",
+            "CANCELLED",
+        }:
+            raise ValueError("promise has an unsupported lifecycle status")
+        promises_by_id[promise_id] = promise
+        promises_by_case.setdefault(case_id, []).append(promise)
+    if any(len(rows) > 1 for rows in promises_by_case.values()):
+        raise ValueError("generator may record at most one promise per case")
+
+    reconciliation_pairs: set[tuple[str, str]] = set()
+    reconciliations_by_promise: dict[str, list[Row]] = {}
+    for reconciliation in dataset["promise_reconciliation"]:
+        promise_id = str(reconciliation["promise_id"])
+        payment_id = str(reconciliation["payment_id"])
+        pair = (promise_id, payment_id)
+        if pair in reconciliation_pairs:
+            raise ValueError("duplicate promise-payment reconciliation")
+        if promise_id not in promises_by_id or payment_id not in payment_ids:
+            raise ValueError("promise reconciliation references an unknown parent")
+        reconciliation_pairs.add(pair)
+        reconciliations_by_promise.setdefault(promise_id, []).append(reconciliation)
+
+    for promise_id, promise in promises_by_id.items():
+        case = cases_by_id[str(promise["case_id"])]
+        loan_id = str(case["loan_id"])
+        recorded_at = datetime.fromisoformat(str(promise["recorded_at"]))
+        due_date = date.fromisoformat(str(promise["promised_date"]))
+        grace_end_date = due_date + timedelta(days=int(policy["reconcile"]["grace_days"]))
+        preference = preferences_by_account[str(case["account_id"])]
+        grace_end = datetime.combine(
+            grace_end_date,
+            time.max,
+            tzinfo=ZoneInfo(str(preference["timezone"])),
+        )
+        eligible_amounts: dict[str, int] = {}
+        for allocation in allocations_by_loan.get(loan_id, []):
+            payment_id = str(allocation["payment_id"])
+            payment = payments_by_id.get(payment_id)
+            if payment is None or payment["status"] != "posted" or payment["posted_at"] is None:
+                continue
+            posted_at = datetime.fromisoformat(str(payment["posted_at"]))
+            if (
+                posted_at > recorded_at
+                and posted_at <= grace_end
+                and posted_at.date() <= AS_OF_DATE
+            ):
+                eligible_amounts[payment_id] = (
+                    eligible_amounts.get(payment_id, 0)
+                    + int(allocation["allocated_amount"])
+                )
+        actual_rows = reconciliations_by_promise.get(promise_id, [])
+        actual_amounts = {
+            str(row["payment_id"]): int(row["reconciled_amount"])
+            for row in actual_rows
+        }
+        if actual_amounts != eligible_amounts:
+            raise ValueError("promise reconciliation does not match eligible posted allocations")
+        cumulative = 0
+        kept_at: datetime | None = None
+        for row in sorted(
+            actual_rows,
+            key=lambda item: datetime.fromisoformat(str(item["reconciled_at"])),
+        ):
+            payment_id = str(row["payment_id"])
+            payment = payments_by_id[payment_id]
+            posted_at = datetime.fromisoformat(str(payment["posted_at"]))
+            if datetime.fromisoformat(str(row["reconciled_at"])) != posted_at:
+                raise ValueError("promise reconciliation timestamp must match payment posting")
+            reconciled_amount = int(row["reconciled_amount"])
+            if reconciled_amount <= 0 or reconciled_amount > int(payment["amount"]):
+                raise ValueError("promise reconciliation amount is invalid")
+            cumulative += reconciled_amount
+            kept_threshold = int(promise["promised_amount"]) * (
+                100 - int(policy["reconcile"]["tolerance_pct"])
+            )
+            reached_kept_threshold = cumulative * 100 >= kept_threshold
+            expected_match_status = (
+                "excess"
+                if cumulative > int(promise["promised_amount"])
+                else "matched"
+                if reached_kept_threshold
+                else "partial"
+            )
+            if row["match_status"] != expected_match_status:
+                raise ValueError("promise reconciliation match status is inconsistent")
+            if reached_kept_threshold and kept_at is None:
+                kept_at = posted_at
+        if kept_at is not None:
+            expected_status = "KEPT"
+            expected_resolved_at = kept_at.isoformat()
+        elif grace_end_date <= AS_OF_DATE:
+            expected_status = _promise_outcome(
+                cumulative,
+                int(promise["promised_amount"]),
+                int(policy["reconcile"]["tolerance_pct"]),
+            )
+            expected_resolved_at = grace_end.isoformat()
+        else:
+            expected_status = "PENDING"
+            expected_resolved_at = None
+        if (
+            promise["status"] != expected_status
+            or promise["resolved_at"] != expected_resolved_at
+        ):
+            raise ValueError("promise lifecycle outcome does not match payments and grace period")
+
+    event_groups: dict[tuple[str, str], list[Row]] = {}
+    for event in dataset["state_event"]:
+        event_case_id = event["case_id"]
+        event_promise_id = event["promise_id"]
+        if event["entity_type"] == "collection_case":
+            if (
+                event_case_id is None
+                or event_promise_id is not None
+                or str(event_case_id) not in cases_by_id
+            ):
+                raise ValueError("case state event has invalid target references")
+            key = ("collection_case", str(event_case_id))
+        elif event["entity_type"] == "promise_to_pay":
+            if (
+                event_promise_id is None
+                or event_case_id is not None
+                or str(event_promise_id) not in promises_by_id
+            ):
+                raise ValueError("promise state event has invalid target references")
+            key = ("promise_to_pay", str(event_promise_id))
+        else:
+            raise ValueError("state event has an unknown entity type")
+        event_groups.setdefault(key, []).append(event)
+
+    expected_event_keys = {
+        *(("collection_case", case_id) for case_id in cases_by_id),
+        *(("promise_to_pay", promise_id) for promise_id in promises_by_id),
+    }
+    if set(event_groups) != expected_event_keys:
+        raise ValueError("each case and promise must have a state-event lifecycle")
+    for (entity_type, entity_id), rows in event_groups.items():
+        rows.sort(key=lambda row: datetime.fromisoformat(str(row["changed_at"])))
+        previous: str | None = None
+        for index, event in enumerate(rows):
+            state = str(event["new_state"])
+            if event["previous_state"] != previous:
+                raise ValueError("state event previous_state breaks lifecycle continuity")
+            if entity_type == "collection_case":
+                allowed_next = (
+                    {"open", "paused", "resolved", "closed"}
+                    if previous is None
+                    else {
+                        "open": {"paused", "resolved", "closed"},
+                        "paused": {"open", "resolved", "closed"},
+                        "resolved": {"closed"},
+                        "closed": set(),
+                    }.get(previous, set())
+                )
+            else:
+                allowed_next = (
+                    {"PENDING"}
+                    if previous is None
+                    else {"KEPT", "PARTIAL", "BROKEN", "CANCELLED"}
+                    if previous == "PENDING"
+                    else set()
+                )
+            if state not in allowed_next or state == previous:
+                raise ValueError("state event violates the lifecycle transition rules")
+            if index and datetime.fromisoformat(str(event["changed_at"])) < datetime.fromisoformat(
+                str(rows[index - 1]["changed_at"])
+            ):
+                raise ValueError("state event timestamps are not chronological")
+            previous = state
+        final_record_state = (
+            str(cases_by_id[entity_id]["status"])
+            if entity_type == "collection_case"
+            else str(promises_by_id[entity_id]["status"])
+        )
+        if previous != final_record_state:
+            raise ValueError("state event lifecycle does not match the current record state")
+
     for loan_id in loan_ids:
         expected_opened_at = _first_threshold_crossing_date(
             grouped_installments[loan_id],

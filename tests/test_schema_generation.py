@@ -18,6 +18,7 @@ class SchemaGenerationTests(unittest.TestCase):
             [sys.executable, "tools/generate_schema.py", "--check"],
             cwd=ROOT,
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             check=False,
             text=True,
         )
@@ -47,6 +48,7 @@ class SchemaGenerationTests(unittest.TestCase):
             "promise_reconciliation",
             "case_state_history",
             "decision_log",
+            "state_event",
             "dispute",
             "hardship_request",
         ):
@@ -77,7 +79,7 @@ class SchemaGenerationTests(unittest.TestCase):
             "validation",
         }
         entities = {table["name"]: table for table in data_dictionary["tables"]}
-        self.assertEqual(len(entities), 16)
+        self.assertEqual(len(entities), 17)
         for table_name, table in entities.items():
             for field_name, field in table["fields"].items():
                 with self.subTest(table=table_name, field=field_name):
@@ -93,6 +95,7 @@ class SchemaGenerationTests(unittest.TestCase):
                 "promise_reconciliation",
                 "case_state_history",
                 "decision_log",
+                "state_event",
                 "dispute",
                 "hardship_request",
             }

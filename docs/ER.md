@@ -23,6 +23,8 @@ erDiagram
     COLLECTION_CASE o|--o{ DECISION_LOG : explains
     LOAN o|--o{ DECISION_LOG : evaluated_by
     ACCOUNT ||--o{ PAYMENT : makes
+    COLLECTION_CASE o|--o{ STATE_EVENT : case_lifecycle
+    PROMISE_TO_PAY o|--o{ STATE_EVENT : promise_lifecycle
 ```
 
 In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means zero or many. Child rows require their non-optional parent by foreign key; nullable foreign keys are called out below.
@@ -45,10 +47,12 @@ In the diagram, `||` means exactly one, `o|` means zero or one, and `o{` means z
 | Payment ↔ Installment via PaymentAllocation | 0..N allocations | 0..N allocations | N:M bridge; each allocation references exactly one payment and one installment. |
 | PromiseToPay ↔ Payment via PromiseReconciliation | 0..N reconciliations | 0..N reconciliations | N:M bridge; supports partial payments and multiple payments per promise. |
 | CollectionCase → CaseStateHistory | 0..N history events | exactly 1 case | Append-only lifecycle history. |
+| CollectionCase → StateEvent | 0..N state events | 0..1 case target per event | Polymorphic event row has exactly one target; case transitions are validated and chronological. |
+| PromiseToPay → StateEvent | 0..N state events | 0..1 promise target per event | Promise transitions follow `NULL → PENDING → KEPT/PARTIAL/BROKEN/CANCELLED`; every generated promise has an initial event and completed promises have a terminal event. |
 | CollectionCase → DecisionLog | 0..N decisions | 0..1 case | `decision_log.case_id` is nullable for decisions not scoped to a case. |
 | Loan → DecisionLog | 0..N decisions | 0..1 loan | `decision_log.loan_id` is nullable for decisions not scoped to a loan. |
 | Account → Payment | 0..N payments | exactly 1 account | A payment is recorded against one account. |
 
-`ContactPreference` is effective-dated (`effective_from`, optional `effective_to`); changes are stored as new rows rather than overwriting prior preferences. `CaseStateHistory`, `DecisionLog`, `ContactAttempt`, and the reconciliation bridges retain event and allocation history. `schema/schema.sql` is hand-maintained PostgreSQL DDL with explicit primary/foreign keys, enum checks, and foreign-key indexes. The YAML data dictionary records field metadata and relationship references.
+`ContactPreference` is effective-dated (`effective_from`, optional `effective_to`); changes are stored as new rows rather than overwriting prior preferences. `StateEvent` is the generated append-only lifecycle stream for collection cases and promises; its validator checks entity references, chronological continuity, allowed transitions, and agreement with each record's final state. `CaseStateHistory` remains the narrower schema-level history table. `DecisionLog`, `ContactAttempt`, and the reconciliation bridges retain decision and payment history. `schema/schema.sql` is hand-maintained PostgreSQL DDL with explicit primary/foreign keys, enum checks, and foreign-key indexes. The YAML data dictionary records field metadata and relationship references.
 
 The generator’s baseline creates one loan per account and assigns two accounts per customer where scale permits; the schema continues to allow accounts with multiple loans. `Payment.unapplied_amount` records the remainder after oldest-first allocation and is reconciled against the allocation bridge.

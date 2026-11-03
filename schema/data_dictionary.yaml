@@ -844,13 +844,14 @@ tables:
       type: VARCHAR(12)
       required: true
       allowed_values:
-      - pending
-      - kept
-      - broken
-      - cancelled
+      - PENDING
+      - KEPT
+      - PARTIAL
+      - BROKEN
+      - CANCELLED
       unit: none
       unique: false
-      validation: Must match subsequent reconciled payments and the promise lifecycle.
+      validation: PENDING while the deadline is in the future; afterward KEPT, PARTIAL, or BROKEN is derived from eligible posted payments and configured tolerance.
     recorded_at:
       name: recorded_at
       type: TIMESTAMPTZ
@@ -866,10 +867,10 @@ tables:
       allowed_values: []
       unit: UTC timestamp
       unique: false
-      validation: Required when status is kept, broken, or cancelled; must not precede recorded_at.
+      validation: Null only while PENDING; otherwise must not precede recorded_at.
   constraints:
   - name: promise_resolved_state
-    check: (status = 'pending') = (resolved_at IS NULL)
+    check: (status = 'PENDING') = (resolved_at IS NULL)
   - name: promise_resolved_order
     check: resolved_at IS NULL OR resolved_at >= recorded_at
 - name: payment
@@ -1453,3 +1454,115 @@ tables:
       unit: UTC timestamp
       unique: false
       validation: Must be a valid timestamp with timezone.
+- name: state_event
+  description: Append-only lifecycle event for a collection case or promise-to-pay.
+  fields:
+    state_event_id:
+      name: state_event_id
+      type: VARCHAR(32)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: true
+      validation: Must match STE-2026- followed by a six-digit zero-padded counter.
+      primary_key: true
+      sql_check: state_event_id ~ '^STE-2026-[0-9]{6}$'
+    entity_type:
+      name: entity_type
+      type: VARCHAR(20)
+      required: true
+      allowed_values:
+      - collection_case
+      - promise_to_pay
+      unit: none
+      unique: false
+      validation: Must identify which lifecycle is transitioning and match the populated entity foreign key.
+    case_id:
+      name: case_id
+      type: VARCHAR(32)
+      required: false
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Required only for a collection_case event; references its case.
+      references:
+        table: collection_case
+        field: case_id
+        on_delete: RESTRICT
+    promise_id:
+      name: promise_id
+      type: VARCHAR(64)
+      required: false
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Required only for a promise_to_pay event; references its promise.
+      references:
+        table: promise_to_pay
+        field: promise_id
+        on_delete: RESTRICT
+    previous_state:
+      name: previous_state
+      type: VARCHAR(16)
+      required: false
+      allowed_values:
+      - open
+      - paused
+      - resolved
+      - closed
+      - PENDING
+      - KEPT
+      - PARTIAL
+      - BROKEN
+      - CANCELLED
+      unit: none
+      unique: false
+      validation: Null for the initial event; otherwise must equal the preceding event's new_state.
+    new_state:
+      name: new_state
+      type: VARCHAR(16)
+      required: true
+      allowed_values:
+      - open
+      - paused
+      - resolved
+      - closed
+      - PENDING
+      - KEPT
+      - PARTIAL
+      - BROKEN
+      - CANCELLED
+      unit: none
+      unique: false
+      validation: Must be an allowed next state for entity_type and pass the lifecycle transition validator.
+    changed_at:
+      name: changed_at
+      type: TIMESTAMPTZ
+      required: true
+      allowed_values: []
+      unit: UTC timestamp
+      unique: false
+      validation: Must be chronological for the entity and not precede its creation.
+    reason_code:
+      name: reason_code
+      type: VARCHAR(40)
+      required: true
+      allowed_values: []
+      unit: none
+      unique: false
+      validation: Must identify the policy or lifecycle cause for the transition.
+    actor_type:
+      name: actor_type
+      type: VARCHAR(24)
+      required: true
+      allowed_values:
+      - system
+      - operations_analyst
+      - compliance_reviewer
+      - administrator
+      unit: none
+      unique: false
+      validation: Must identify the responsible actor.
+  constraints:
+  - name: state_event_exactly_one_target
+    check: (case_id IS NOT NULL AND promise_id IS NULL AND entity_type = 'collection_case') OR (case_id IS NULL AND promise_id IS NOT NULL AND entity_type = 'promise_to_pay')

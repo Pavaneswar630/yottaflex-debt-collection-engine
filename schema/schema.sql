@@ -228,8 +228,8 @@ CREATE TABLE promise_to_pay (
     CONSTRAINT promise_to_pay_promise_id_check CHECK (promise_id ~ '^PTP-COL-2026-[0-9]{6}-[0-9]{3}$'),
     CONSTRAINT promise_to_pay_case_id_fkey FOREIGN KEY (case_id) REFERENCES collection_case (case_id) ON DELETE RESTRICT,
     CONSTRAINT promise_to_pay_promised_amount_check CHECK (promised_amount > 0),
-    CONSTRAINT promise_to_pay_status_enum CHECK (status IN ('pending', 'kept', 'broken', 'cancelled')),
-    CONSTRAINT promise_resolved_state CHECK ((status = 'pending') = (resolved_at IS NULL)),
+    CONSTRAINT promise_to_pay_status_enum CHECK (status IN ('PENDING', 'KEPT', 'PARTIAL', 'BROKEN', 'CANCELLED')),
+    CONSTRAINT promise_resolved_state CHECK ((status = 'PENDING') = (resolved_at IS NULL)),
     CONSTRAINT promise_resolved_order CHECK (resolved_at IS NULL OR resolved_at >= recorded_at)
 );
 
@@ -339,6 +339,44 @@ CREATE TABLE decision_log (
         CHECK (priority_score IS NULL OR priority_score BETWEEN 0 AND 100)
 );
 
+CREATE TABLE state_event (
+    state_event_id VARCHAR(32) NOT NULL,
+    entity_type VARCHAR(20) NOT NULL,
+    case_id VARCHAR(32),
+    promise_id VARCHAR(64),
+    previous_state VARCHAR(16),
+    new_state VARCHAR(16) NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL,
+    reason_code VARCHAR(40) NOT NULL,
+    actor_type VARCHAR(24) NOT NULL,
+    CONSTRAINT state_event_pkey PRIMARY KEY (state_event_id),
+    CONSTRAINT state_event_id_check CHECK (state_event_id ~ '^STE-2026-[0-9]{6}$'),
+    CONSTRAINT state_event_case_fkey FOREIGN KEY (case_id)
+        REFERENCES collection_case (case_id) ON DELETE RESTRICT,
+    CONSTRAINT state_event_promise_fkey FOREIGN KEY (promise_id)
+        REFERENCES promise_to_pay (promise_id) ON DELETE RESTRICT,
+    CONSTRAINT state_event_type_check CHECK (entity_type IN ('collection_case', 'promise_to_pay')),
+    CONSTRAINT state_event_target_check CHECK (
+        (case_id IS NOT NULL AND promise_id IS NULL AND entity_type = 'collection_case')
+        OR (case_id IS NULL AND promise_id IS NOT NULL AND entity_type = 'promise_to_pay')
+    ),
+    CONSTRAINT state_event_previous_check CHECK (
+        previous_state IS NULL OR previous_state IN (
+            'open', 'paused', 'resolved', 'closed',
+            'PENDING', 'KEPT', 'PARTIAL', 'BROKEN', 'CANCELLED'
+        )
+    ),
+    CONSTRAINT state_event_new_check CHECK (
+        new_state IN (
+            'open', 'paused', 'resolved', 'closed',
+            'PENDING', 'KEPT', 'PARTIAL', 'BROKEN', 'CANCELLED'
+        )
+    ),
+    CONSTRAINT state_event_reason_check CHECK (length(trim(reason_code)) > 0),
+    CONSTRAINT state_event_actor_check
+        CHECK (actor_type IN ('system', 'operations_analyst', 'compliance_reviewer', 'administrator'))
+);
+
 -- Explicit indexes cover every foreign-key column, including composite bridge keys.
 CREATE INDEX account_customer_id_idx ON account (customer_id);
 CREATE INDEX loan_account_id_idx ON loan (account_id);
@@ -365,3 +403,5 @@ CREATE INDEX promise_reconciliation_payment_id_idx
 CREATE INDEX case_state_history_case_id_idx ON case_state_history (case_id);
 CREATE INDEX decision_log_case_id_idx ON decision_log (case_id);
 CREATE INDEX decision_log_loan_id_idx ON decision_log (loan_id);
+CREATE INDEX state_event_case_id_idx ON state_event (case_id);
+CREATE INDEX state_event_promise_id_idx ON state_event (promise_id);

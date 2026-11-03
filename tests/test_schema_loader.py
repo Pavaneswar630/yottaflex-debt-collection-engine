@@ -10,8 +10,9 @@ from yottaflex_debt_collection.schema_loader import DataDictionary, load_diction
 class SchemaLoaderTests(unittest.TestCase):
     def test_repository_dictionary_validates(self) -> None:
         dictionary = load_dictionary()
-        self.assertEqual(len(dictionary.tables), 16)
+        self.assertEqual(len(dictionary.tables), 17)
         self.assertEqual(dictionary.tables[0].name, "customer")
+        self.assertEqual(dictionary.tables[-1].name, "state_event")
 
     def test_field_contract_requires_named_dictionary_attributes(self) -> None:
         minimal = {
