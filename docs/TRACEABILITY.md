@@ -30,7 +30,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 |---|---|---|---|
 | **B01** Prioritize overdue accounts, schedule contact tasks, and monitor commitments without aggressive or unlawful practices. | `config/policy.yaml`, `prioritization.py`, `contacts.py`, `reconciliation.py` | `test_policy_config.py`, `test_prioritization.py`, `test_contact_policy.py`, `test_reconciliation.py` | README; `docs/DATA_DICTIONARY.md` ; status: Example policy defaults defined; runtime enforcement planned |
 | **B02** Build an end-to-end workflow for prioritization, compliant contact scheduling, and commitment monitoring. | `generator.py`, `prioritization.py`, `contacts.py`, `reconciliation.py` | `test_workflow.py` | README; `docs/ARCHITECTURE.md` ; status: Planned |
-| **B03** Expose key decisions and exceptions, preserve traceability, and produce measurable outputs. | `models.py`, `prioritization.py`, `validation.py` | `test_decision_traceability.py`, `test_metrics.py` | `docs/ARCHITECTURE.md`; `docs/VALIDATION.md` ; status: Planned |
+| **B03** Expose key decisions and exceptions, preserve traceability, and produce measurable outputs. | `models.py`, `prioritization.py`, `integrity.py`, `detectors.py`, `evaluation.py` | `test_integrity_detectors.py` | `docs/coverage_report.md`, `reports/detector_metrics.md` ; status: Structural validation, three blind detectors, and precision/recall/F1 reporting implemented |
 | **B04** Medium complexity requires related entities, conditional rules, an exception path, and meaningful evaluation metrics. | All domain modules | `test_workflow.py`, `test_exceptions.py`, `test_metrics.py` | `docs/ARCHITECTURE.md`; `docs/VALIDATION.md` ; status: Planned |
 | **B05** Primary actors are the customer/account holder, operations analyst, risk/compliance reviewer, and system administrator. | `models.py`, `contacts.py` | `test_actor_workflows.py` | `docs/ARCHITECTURE.md` ; status: Planned |
 
@@ -86,13 +86,13 @@ This matrix maps every requirement statement and list item in the supplied brief
 
 | Brief sentence | Module | Test | Doc |
 |---|---|---|---|
-| **V01** Validate primary-key uniqueness. | `validation.py` | `test_primary_keys.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V02** Validate foreign-key integrity. | `validation.py` | `test_foreign_keys.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V03** Validate allowed enums. | `validation.py` | `test_allowed_values.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V04** Validate date ordering. | `validation.py` | `test_date_ordering.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V05** Validate arithmetic reconciliation. | `validation.py`, `reconciliation.py` | `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V06** Validate lifecycle transitions. | `validation.py`, `models.py` | `test_lifecycle_transitions.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V07** Validate duplicate checks. | `validation.py` | `test_duplicates.py` | `docs/VALIDATION.md` ; status: Planned |
+| **V01** Validate primary-key uniqueness. | `integrity.py` | `test_integrity_detectors.py::test_integrity_checks_generated_files_and_detects_duplicate_key` | `docs/coverage_report.md` ; status: Implemented for simple and composite primary keys |
+| **V02** Validate foreign-key integrity. | `integrity.py` | `test_integrity_detectors.py::test_integrity_flags_foreign_key_enum_date_arithmetic_and_lifecycle_errors` | `docs/coverage_report.md` ; status: Implemented |
+| **V03** Validate allowed enums. | `integrity.py` | `test_integrity_detectors.py::test_integrity_flags_foreign_key_enum_date_arithmetic_and_lifecycle_errors` | `docs/coverage_report.md` ; status: Implemented |
+| **V04** Validate date ordering. | `integrity.py` | `test_integrity_detectors.py::test_integrity_flags_foreign_key_enum_date_arithmetic_and_lifecycle_errors` | `docs/coverage_report.md` ; status: Implemented |
+| **V05** Validate arithmetic reconciliation. | `integrity.py`, `reconciliation.py` | `test_integrity_detectors.py::test_integrity_flags_foreign_key_enum_date_arithmetic_and_lifecycle_errors`, `test_generator.py` | `docs/coverage_report.md` ; status: Implemented for installment/principal and payment allocation arithmetic |
+| **V06** Validate lifecycle transitions. | `integrity.py`, `models.py` | `test_integrity_detectors.py::test_integrity_flags_foreign_key_enum_date_arithmetic_and_lifecycle_errors` | `docs/coverage_report.md` ; status: Implemented for case and promise events |
+| **V07** Validate duplicate checks. | `integrity.py` | `test_integrity_detectors.py::test_integrity_checks_generated_files_and_detects_duplicate_key` | `docs/coverage_report.md` ; status: Implemented for all exported primary and bridge keys |
 | **V08** Ensure arrears calculations reconcile. | `reconciliation.py`, `validation.py` | `test_delinquency_calculations.py` | `docs/VALIDATION.md` ; status: Planned |
 | **V09** Make prioritization explainable. | `prioritization.py` | `test_prioritization.py` | `docs/ARCHITECTURE.md` ; status: Planned |
 | **V10** Enforce contact restrictions. | `config/policy.yaml`, `contacts.py`, `validation.py` | `test_policy_config.py`, `test_contact_policy.py` | `docs/VALIDATION.md` ; status: Dispute and hardship hold defaults defined; runtime enforcement planned |
@@ -101,11 +101,12 @@ This matrix maps every requirement statement and list item in the supplied brief
 | **V13** Evaluate consistent IDs and valid joins. | `generator.py`, `validation.py` | `test_id_conventions.py`, `test_foreign_keys.py` | `docs/VALIDATION.md` ; status: Planned |
 | **V14** Evaluate dependency/lifecycle consistency across entities. | `models.py`, `validation.py` | `test_lifecycle_transitions.py`, `test_relationships.py` | `docs/VALIDATION.md` ; status: Planned |
 | **V15** Evaluate correct derived values and reconciliation. | `generator.py`, `reconciliation.py`, `validation.py` | `test_derived_values.py`, `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V16** Cover normal, boundary, failure, and exception scenarios. | `generator.py`, `validation.py` | `test_coverage_profile.py`, `test_edge_cases.py` | `docs/VALIDATION.md` ; status: Planned |
-| **V17** Keep ground truth separate. | `generator.py`, `validation.py` | `test_ground_truth_separation.py` | `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: Planned |
+| **V16** Cover normal, boundary, failure, and exception scenarios. | `generator.py`, `tests/test_integrity_detectors.py` | `test_integrity_detectors.py::test_minimum_coverage_for_normal_boundary_failure_and_exception` | `docs/coverage_report.md` ; status: Minimum counts asserted for normal, boundary, failure, and exception scenarios |
+| **V17** Keep ground truth separate from detector inputs. | `generator.py`, `detectors.py`, `evaluation.py` | `test_integrity_detectors.py::test_blind_detector_module_cannot_reference_label_locations` | `docs/GENERATION.md`, `docs/coverage_report.md` ; status: Detectors consume data tables only; evaluation reads labels separately |
 | **V18** Demonstrate fixed-seed reproducibility. | `generator.py` | `test_reproducibility.py` | `docs/GENERATION.md` ; status: Planned |
 | **V19** Provide documentation, fixed seed, source manifest, and validation summary. | `generator.py`, `validation.py` | `test_export_manifest.py` | README; `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: Planned |
 | **V20** Regenerate twice with the same seed and compare row counts and checksums. | `generator.py`, `validation.py` | `test_reproducibility.py` | `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: Planned |
+| **V21** Score blind detectors by precision, recall, and F1 for the initial three issue types. | `detectors.py`, `evaluation.py` | `test_integrity_detectors.py::test_detectors_find_three_primary_issue_types_and_metrics` | `reports/detector_metrics.md`, `docs/coverage_report.md` ; status: Implemented; evaluation excludes derived-only labels |
 
 ## Exports, provenance, and submission
 
