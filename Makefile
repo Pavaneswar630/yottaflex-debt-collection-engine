@@ -1,4 +1,4 @@
-.PHONY: setup data data-starter validate integrity detect evaluate db-load repro test api ui demo eval-ai schema
+.PHONY: setup data data-starter validate integrity detect evaluate db-load repro test api ui ui-build api-types demo eval-ai schema
 
 setup:
 	python -m pip install -e ".[dev]"
@@ -36,7 +36,14 @@ api:
 	python -m yottaflex_debt_collection.api
 
 ui:
-	@echo "TODO: UI is not implemented yet."
+	npm --prefix ui run dev
+
+ui-build:
+	npm --prefix ui run build
+
+api-types:
+	python tools/export_openapi.py
+	npm --prefix ui run generate:api-types
 
 demo:
 	@echo "TODO: end-to-end demo is not implemented yet."

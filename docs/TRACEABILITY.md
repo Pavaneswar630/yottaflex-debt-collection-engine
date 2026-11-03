@@ -156,6 +156,17 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Expose `/admin/policy`, `/admin/validation`, and `/admin/manifest`. | `api.py`, `integrity.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Read-only policy, validation, and manifest endpoints implemented |
 | Ensure API tests cover suppressed cases and blocked contact events. | `api.py` | `tests/test_database_api.py::ApiTests::test_read_only_endpoints_cover_suppressed_and_blocked_contact_cases` | `docs/API.md` ; status: Both response paths are tested |
 
+## H48-55 React/TypeScript UI
+
+| Brief sentence | Module | Test | Doc |
+|---|---|---|---|
+| Scaffold a React/TypeScript app with generated API path types. | `ui/src`, `ui/openapi.json`, `ui/src/api/schema.d.ts` | `npm --prefix ui run build` | `docs/UI.md` ; status: React/Vite app and `openapi-typescript` generation implemented |
+| Provide a priority queue with score tiers and reason-code chips. | `ui/src/App.tsx` | UI production build and browser smoke test | `docs/UI.md` ; status: Search, tier filter, pagination, explainable scores and reason codes implemented |
+| Provide case details with score breakdown and contact/promise timeline. | `ui/src/App.tsx`, `src/yottaflex_debt_collection/api.py` | UI production build and browser smoke test | `docs/UI.md` ; status: Score components and recorded case timeline displayed |
+| Provide compliance exceptions and metrics. | `ui/src/App.tsx`, `src/yottaflex_debt_collection/api.py` | UI production build and browser smoke test | `docs/UI.md` ; status: Blind detector output, promise outcomes, cure rate and rule outcomes displayed |
+| Provide a read-only administrator tab. | `ui/src/App.tsx` | UI production build and browser smoke test | `docs/UI.md` ; status: Health, validation, manifest and policy are view-only |
+| Include loading and error states on UI data views. | `ui/src/App.tsx` | UI production build and browser smoke test | `docs/UI.md` ; status: Loading indicators and retryable API error states implemented |
+
 ## Numbered workflow rules and generation steps
 
 | Brief sentence | Module | Test | Doc |

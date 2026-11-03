@@ -253,6 +253,7 @@ class ApiTests(unittest.TestCase):
             detail = client.get(f"/cases/{case_id}")
             self.assertEqual(detail.status_code, 200)
             self.assertEqual(detail.json()["case_id"], case_id)
+            self.assertTrue(detail.json()["display_name"])
             self.assertTrue(
                 client.get(f"/cases/{case_id}/timeline").json()["events"]
             )

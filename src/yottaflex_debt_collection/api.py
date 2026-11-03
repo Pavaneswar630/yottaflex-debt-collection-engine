@@ -107,6 +107,7 @@ def create_app(
                 loan.loan_status,
                 loan.principal_amount,
                 account.customer_id,
+                customer.display_name,
                 customer.risk_band,
                 latest_snapshot.days_past_due,
                 latest_snapshot.arrears_amount,

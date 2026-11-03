@@ -34,7 +34,7 @@ python -m yottaflex_debt_collection.database `
 
 ## API endpoints
 
-Start the server with `make api`. All endpoints are read-only.
+Start the server with `make api`. All endpoints are read-only. For the React UI, start `make ui` in a second terminal and open `http://127.0.0.1:5173`; Vite proxies `/api` requests to the local API.
 
 | Method and path | Description |
 |---|---|
@@ -54,3 +54,5 @@ Configure the input paths with `YOTTAFLEX_DATA_DIR`, `YOTTAFLEX_DB_PATH`, and `Y
 ## Verification
 
 `tests/test_database_api.py` loads a generated dataset into SQLite, verifies FK enforcement, compares all six view outputs against independent pandas recomputations, and exercises the API including suppressed cases and blocked contact history.
+
+The UI API path types are generated from the FastAPI OpenAPI schema. After changing API routes, refresh them with `make api-types`.
