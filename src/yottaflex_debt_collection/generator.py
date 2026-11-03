@@ -3,7 +3,7 @@
 import csv
 import math
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, TypeAlias
 from zoneinfo import ZoneInfo
@@ -169,6 +169,18 @@ CSV_COLUMNS: dict[str, tuple[str, ...]] = {
         "installment_id",
         "allocated_amount",
         "allocated_at",
+    ),
+    "decision_log": (
+        "decision_id",
+        "case_id",
+        "loan_id",
+        "rule_id",
+        "decision_type",
+        "outcome",
+        "reason",
+        "priority_score",
+        "as_of_date",
+        "created_at",
     ),
 }
 
@@ -455,6 +467,105 @@ def _first_matching_suppression_rule(
         if matches:
             return rule_id
     return None
+
+
+def _schedule_contact_decision(
+    case: Row,
+    preference: Row,
+    decision_id: str,
+    policy: dict[str, Any],
+    scheduled_history: list[tuple[str, datetime]],
+) -> tuple[Row, datetime | None]:
+    """Create one auditable schedule, block, or suppression decision for a case."""
+    account_id = str(case["account_id"])
+    case_id = str(case["case_id"])
+    loan_id = str(case["loan_id"])
+    rule_id: str
+    decision_type: str
+    outcome: str
+    reason: str
+    scheduled_at: datetime | None = None
+
+    suppression_rule_id = case["suppression_rule_id"]
+    if suppression_rule_id is not None:
+        rule_id = str(suppression_rule_id)
+        if rule_id == "R-PAIDOFF-01":
+            decision_type, outcome = "close_paid_case", "close"
+        else:
+            decision_type, outcome = "route_to_review", "review"
+        reason = f"suppressed by first matching rule {rule_id}"
+    else:
+        rule = policy["rules"]["R-CONTACT-01"]
+        zone = ZoneInfo(str(preference["timezone"]))
+        effective_from = date.fromisoformat(str(preference["effective_from"]))
+        effective_to = (
+            date.fromisoformat(str(preference["effective_to"]))
+            if preference["effective_to"] is not None
+            else None
+        )
+        allowed_start = time.fromisoformat(str(preference["allowed_start_time"]))
+        allowed_end = time.fromisoformat(str(preference["allowed_end_time"]))
+        policy_start = time.fromisoformat(str(rule["start_local"]))
+        policy_end = time.fromisoformat(str(rule["end_local"]))
+        candidate_time = max(allowed_start, policy_start)
+        candidate_at = datetime.combine(AS_OF_DATE, candidate_time, tzinfo=zone)
+        effective = effective_from <= AS_OF_DATE and (
+            effective_to is None or effective_to >= AS_OF_DATE
+        )
+        restricted = bool(preference["do_not_contact"]) and effective
+        inside_window = (
+            effective
+            and candidate_time < allowed_end
+            and policy_start <= candidate_time < policy_end
+        )
+        if restricted:
+            rule_id = "R-CEASE-01"
+            decision_type, outcome = "contact_blocked", "block"
+            reason = "blocked by active do-not-contact restriction (R-CEASE-01)"
+        elif not inside_window:
+            rule_id = "R-CONTACT-01"
+            decision_type, outcome = "contact_blocked", "block"
+            reason = "no permissible effective local contact time (R-CONTACT-01)"
+        else:
+            cap_rule = policy["rules"]["R-CONTACT-02"]
+            period = timedelta(days=cap_rule["period_days"])
+            recent_scheduled = [
+                prior_at
+                for prior_account, prior_at in scheduled_history
+                if prior_account == account_id
+                and timedelta(0) <= candidate_at - prior_at < period
+            ]
+            if len(recent_scheduled) >= cap_rule["max_attempts"]:
+                rule_id = "R-CONTACT-02"
+                decision_type, outcome = "contact_blocked", "block"
+                reason = (
+                    f"weekly contact capacity reached: {len(recent_scheduled)} "
+                    f"scheduled contacts in {cap_rule['period_days']} days "
+                    f"(R-CONTACT-02)"
+                )
+            else:
+                rule_id = "R-CONTACT-01"
+                decision_type, outcome = "contact_allowed", "allow"
+                scheduled_at = candidate_at
+                scheduled_history.append((account_id, candidate_at))
+                reason = (
+                    f"scheduled within customer local contact window at "
+                    f"{candidate_at.isoformat()} (R-CONTACT-01)"
+                )
+
+    decision = {
+        "decision_id": decision_id,
+        "case_id": case_id,
+        "loan_id": loan_id,
+        "rule_id": rule_id,
+        "decision_type": decision_type,
+        "outcome": outcome,
+        "reason": reason,
+        "priority_score": case["priority_score"],
+        "as_of_date": AS_OF_DATE.isoformat(),
+        "created_at": UTC_GENERATED_AT,
+    }
+    return decision, scheduled_at
 
 
 
@@ -931,6 +1042,25 @@ def generate_dataset(
                     }
                 )
 
+    scheduled_history: list[tuple[str, datetime]] = []
+    decision_logs: list[Row] = []
+    for case in sorted(
+        collection_cases,
+        key=lambda row: (-float(row["priority_score"]), str(row["case_id"])),
+    ):
+        account_id = str(case["account_id"])
+        decision, scheduled_at = _schedule_contact_decision(
+            case,
+            preferences_by_account[account_id],
+            ids.next_id("decision_log"),
+            policy,
+            scheduled_history,
+        )
+        decision_logs.append(decision)
+        case["next_action_at"] = (
+            scheduled_at.isoformat() if scheduled_at is not None else None
+        )
+
     dataset: Dataset = {
         "customer": customers,
         "account": accounts,
@@ -938,6 +1068,7 @@ def generate_dataset(
         "installment": installments,
         "delinquency_snapshot": delinquency_snapshots,
         "collection_case": collection_cases,
+        "decision_log": decision_logs,
         "contact_preference": contact_preferences,
         "dispute": disputes,
         "hardship_request": hardship_requests,
@@ -967,6 +1098,7 @@ def validate_dataset(dataset: Dataset) -> None:
         "dispute": "dispute_id",
         "hardship_request": "hardship_request_id",
         "payment": "payment_id",
+        "decision_log": "decision_id",
     }
     for table, field in id_fields.items():
         ids = [str(row[field]) for row in dataset[table]]
@@ -1246,6 +1378,96 @@ def validate_dataset(dataset: Dataset) -> None:
         )
         if case["status"] != expected_status:
             raise ValueError("collection case status does not match suppression policy")
+    cases_by_id = {
+        str(row["case_id"]): row for row in dataset["collection_case"]
+    }
+    decisions_by_case: dict[str, list[Row]] = {}
+    for decision in dataset["decision_log"]:
+        case_id = str(decision["case_id"])
+        if case_id not in cases_by_id:
+            raise ValueError("decision log references an unknown case")
+        if decision["loan_id"] != cases_by_id[case_id]["loan_id"]:
+            raise ValueError("decision log loan does not match its collection case")
+        if decision["rule_id"] not in policy["rules"]:
+            raise ValueError("decision log references an unknown policy rule")
+        if decision["as_of_date"] != AS_OF_DATE.isoformat():
+            raise ValueError("decision log must use the fixed as-of date")
+        decisions_by_case.setdefault(case_id, []).append(decision)
+    if set(decisions_by_case) != set(cases_by_id) or any(
+        len(rows) != 1 for rows in decisions_by_case.values()
+    ):
+        raise ValueError("each collection case must have exactly one scheduling decision")
+    for case_id, case in cases_by_id.items():
+        decision = decisions_by_case[case_id][0]
+        scheduled = decision["decision_type"] == "contact_allowed"
+        suppression_rule = case["suppression_rule_id"]
+        if suppression_rule is not None:
+            expected_type, expected_outcome = (
+                ("close_paid_case", "close")
+                if suppression_rule == "R-PAIDOFF-01"
+                else ("route_to_review", "review")
+            )
+            if (
+                decision["rule_id"] != suppression_rule
+                or decision["decision_type"] != expected_type
+                or decision["outcome"] != expected_outcome
+            ):
+                raise ValueError("suppressed contact decision does not match first rule")
+        if scheduled:
+            if (
+                decision["outcome"] != "allow"
+                or decision["rule_id"] != "R-CONTACT-01"
+                or case["next_action_at"] is None
+            ):
+                raise ValueError("scheduled contact decision is inconsistent")
+            scheduled_at = datetime.fromisoformat(str(case["next_action_at"]))
+            preference = preferences_by_account[str(case["account_id"])]
+            local_at = scheduled_at.astimezone(
+                ZoneInfo(str(preference["timezone"]))
+            )
+            contact_rule = policy["rules"]["R-CONTACT-01"]
+            if not (
+                time.fromisoformat(str(contact_rule["start_local"]))
+                <= local_at.timetz().replace(tzinfo=None)
+                < time.fromisoformat(str(contact_rule["end_local"]))
+                and time.fromisoformat(str(preference["allowed_start_time"]))
+                <= local_at.timetz().replace(tzinfo=None)
+                < time.fromisoformat(str(preference["allowed_end_time"]))
+            ):
+                raise ValueError("scheduled contact falls outside the local allowed window")
+        else:
+            if case["next_action_at"] is not None:
+                raise ValueError("blocked or suppressed decision cannot schedule a contact")
+            if suppression_rule is None and not (
+                decision["decision_type"] == "contact_blocked"
+                and decision["outcome"] == "block"
+                and decision["rule_id"]
+                in {"R-CONTACT-01", "R-CONTACT-02", "R-CEASE-01"}
+            ):
+                raise ValueError("blocked contact decision is inconsistent")
+
+    scheduled_decisions = sorted(
+        (
+            (
+                str(cases_by_id[case_id]["account_id"]),
+                datetime.fromisoformat(str(cases_by_id[case_id]["next_action_at"])),
+            )
+            for case_id, rows in decisions_by_case.items()
+            if rows[0]["decision_type"] == "contact_allowed"
+        ),
+        key=lambda item: item[1],
+    )
+    cap = policy["rules"]["R-CONTACT-02"]
+    cap_period = timedelta(days=cap["period_days"])
+    for index, (account_id, scheduled_at) in enumerate(scheduled_decisions):
+        in_window = sum(
+            1
+            for prior_account, prior_at in scheduled_decisions[:index]
+            if prior_account == account_id
+            and timedelta(0) <= scheduled_at - prior_at < cap_period
+        )
+        if in_window >= cap["max_attempts"]:
+            raise ValueError("scheduled contacts exceed the rolling weekly account cap")
     for loan_id in loan_ids:
         expected_opened_at = _first_threshold_crossing_date(
             grouped_installments[loan_id],

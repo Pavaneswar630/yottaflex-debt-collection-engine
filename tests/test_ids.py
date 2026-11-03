@@ -37,6 +37,9 @@ class IdHelpersTests(unittest.TestCase):
         factory = IdFactory()
         self.assertEqual(factory.next_id("customer"), "CUS-000001")
         self.assertEqual(factory.next_id("account"), "ACC-000001")
+        decision = factory.next_id("decision_log")
+        self.assertRegex(decision, re.compile(r"^DEC-2026-\d{6}$"))
+        self.assertEqual(decision, "DEC-2026-000001")
 
     def test_same_input_is_immutable_and_deterministic(self) -> None:
         self.assertEqual(make_id("LOAN-2026", 23, 6), make_id("LOAN-2026", 23, 6))
@@ -49,6 +52,10 @@ class IdHelpersTests(unittest.TestCase):
         self.assertEqual(len({payment_id(number) for number in range(1, 101)}), 100)
         self.assertEqual(
             len({case_state_history_id(number) for number in range(1, 101)}), 100
+        )
+        factory = IdFactory()
+        self.assertEqual(
+            len({factory.next_id("decision_log") for _ in range(100)}), 100
         )
         loan = loan_id(1)
         self.assertEqual(

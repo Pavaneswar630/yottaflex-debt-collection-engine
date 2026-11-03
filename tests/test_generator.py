@@ -5,9 +5,10 @@ import hashlib
 import unittest
 from collections import Counter
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -15,6 +16,7 @@ from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
     SEGMENT_PROBABILITIES,
     _first_matching_suppression_rule,
+    _schedule_contact_decision,
     generate_dataset,
 )
 from yottaflex_debt_collection.schema_loader import load_dictionary
@@ -529,6 +531,112 @@ class GeneratorTests(unittest.TestCase):
                 POLICY,
             )
         )
+
+    def test_each_case_has_one_scheduled_blocked_or_suppressed_decision(self) -> None:
+        dataset = generate_dataset(500, 217)
+        decisions_by_case: dict[str, list[dict[str, str | int | bool | None]]] = {}
+        for decision in dataset["decision_log"]:
+            decisions_by_case.setdefault(str(decision["case_id"]), []).append(decision)
+            self.assertTrue(decision["rule_id"])
+
+        self.assertEqual(set(decisions_by_case), {row["case_id"] for row in dataset["collection_case"]})
+        cases_by_id = {str(row["case_id"]): row for row in dataset["collection_case"]}
+        for case in dataset["collection_case"]:
+            decisions = decisions_by_case[str(case["case_id"])]
+            self.assertEqual(len(decisions), 1)
+            decision = decisions[0]
+            self.assertEqual(decision["loan_id"], cases_by_id[str(case["case_id"])]["loan_id"])
+            if case["suppression_rule_id"] is not None:
+                self.assertEqual(decision["rule_id"], case["suppression_rule_id"])
+                self.assertIn("suppressed", str(decision["reason"]))
+                self.assertIsNone(case["next_action_at"])
+            elif decision["decision_type"] == "contact_allowed":
+                self.assertEqual(decision["rule_id"], "R-CONTACT-01")
+                self.assertEqual(decision["outcome"], "allow")
+                self.assertIsNotNone(case["next_action_at"])
+            else:
+                self.assertEqual(decision["decision_type"], "contact_blocked")
+                self.assertEqual(decision["outcome"], "block")
+                self.assertIsNotNone(decision["rule_id"])
+                self.assertIsNone(case["next_action_at"])
+
+    def test_contact_scheduler_enforces_window_restriction_and_weekly_cap(self) -> None:
+        base_case = {
+            "case_id": "COL-2026-000001",
+            "account_id": "ACC-000001",
+            "loan_id": "LOAN-2026-000001",
+            "priority_score": "55.00",
+            "suppression_rule_id": None,
+        }
+        preference = {
+            "account_id": "ACC-000001",
+            "timezone": "America/New_York",
+            "allowed_start_time": "08:00:00",
+            "allowed_end_time": "19:00:00",
+            "effective_from": "2026-01-01",
+            "effective_to": None,
+            "do_not_contact": False,
+        }
+
+        restricted_preference = {**preference, "do_not_contact": True}
+        restricted_decision, restricted_schedule = _schedule_contact_decision(
+            base_case,
+            restricted_preference,
+            "DEC-2026-000001",
+            POLICY,
+            [],
+        )
+        self.assertEqual(restricted_decision["rule_id"], "R-CEASE-01")
+        self.assertEqual(restricted_decision["outcome"], "block")
+        self.assertIsNone(restricted_schedule)
+
+        out_of_window_preference = {
+            **preference,
+            "allowed_start_time": "20:00:00",
+            "allowed_end_time": "21:00:00",
+        }
+        window_decision, window_schedule = _schedule_contact_decision(
+            base_case,
+            out_of_window_preference,
+            "DEC-2026-000002",
+            POLICY,
+            [],
+        )
+        self.assertEqual(window_decision["rule_id"], "R-CONTACT-01")
+        self.assertEqual(window_decision["outcome"], "block")
+        self.assertIsNone(window_schedule)
+
+        scheduled_history = [
+            (
+                "ACC-000001",
+                datetime(2026, 10, 28, 8, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+            for _ in range(POLICY["rules"]["R-CONTACT-02"]["max_attempts"])
+        ]
+        cap_decision, cap_schedule = _schedule_contact_decision(
+            base_case,
+            preference,
+            "DEC-2026-000003",
+            POLICY,
+            scheduled_history,
+        )
+        self.assertEqual(cap_decision["rule_id"], "R-CONTACT-02")
+        self.assertEqual(cap_decision["outcome"], "block")
+        self.assertIsNone(cap_schedule)
+
+        allowed_decision, allowed_schedule = _schedule_contact_decision(
+            base_case,
+            preference,
+            "DEC-2026-000004",
+            POLICY,
+            [],
+        )
+        self.assertEqual(allowed_decision["rule_id"], "R-CONTACT-01")
+        self.assertEqual(allowed_decision["outcome"], "allow")
+        self.assertIsNotNone(allowed_schedule)
+        assert allowed_schedule is not None
+        self.assertEqual(allowed_schedule.tzinfo, ZoneInfo("America/New_York"))
+        self.assertEqual(allowed_schedule.hour, 8)
 
     def test_invalid_scale_is_rejected(self) -> None:
         for invalid in (0, -1, True):

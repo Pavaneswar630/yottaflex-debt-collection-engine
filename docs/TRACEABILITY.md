@@ -43,7 +43,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 | **W03** Create loan schedules and installment due dates. | `generator.py` | `test_schedule_generation.py` | `docs/DATA_DICTIONARY.md` ; status: Planned |
 | **W04** Generate payment histories. | `generator.py`, `reconciliation.py` | `test_payment_history.py` | `docs/ARCHITECTURE.md` ; status: Planned |
 | **W05** Derive days-past-due and arrears. | `generator.py`, `models.py` | `test_delinquency_calculations.py` | `docs/DATA_DICTIONARY.md` ; status: Planned |
-| **W06** Create contact preferences and permissible contact windows. | `config/policy.yaml`, `contacts.py`, `generator.py` | `test_policy_config.py`, `test_contact_policy.py` | `docs/DATA_DICTIONARY.md`, README ; status: Example windows and weekly attempt cap defined; runtime enforcement planned |
+| **W06** Create contact preferences and permissible contact windows. | `config/policy.yaml`, `generator.py` | `test_policy_config.py`, `test_generator.py` | `docs/DATA_DICTIONARY.md`, `docs/GENERATION.md` ; status: Effective-dated timezone/window, restriction, and rolling account cap are enforced and logged |
 | **W07** Score cases from balance, age, and risk. | `config/policy.yaml`, `prioritization.py` | `test_policy_config.py`, `test_prioritization.py` | `docs/ARCHITECTURE.md` ; status: Example weights and DPD buckets defined; runtime scoring planned |
 | **W08** Record contact outcomes and promises. | `contacts.py`, `models.py` | `test_contact_events.py`, `test_promise_lifecycle.py` | `docs/DATA_DICTIONARY.md` ; status: Planned |
 | **W09** Reconcile payments to commitments. | `reconciliation.py` | `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
@@ -161,7 +161,7 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Brief sentence | Module | Test | Doc |
 |---|---|---|---|
 | Edge case: a paid account remains in collection. | `generator.py`, `R-PAIDOFF-01` | `test_generator.py`, `test_policy_config.py` | `docs/GENERATION.md` ; status: Paid-off rule has first suppression precedence and resolves the case |
-| Edge case: contact occurs outside the allowed window. | `generator.py`, `contacts.py`, `R-CONTACT-01` | `test_edge_cases.py`, `test_contact_policy.py` | `docs/VALIDATION.md` ; status: Planned |
+| Edge case: contact occurs outside the allowed window. | `generator.py`, `R-CONTACT-01` | `test_generator.py` | `docs/GENERATION.md` ; status: Scheduler blocks impermissible windows and records a rule-linked DecisionLog |
 | Edge case: payment is allocated to the wrong installment. | `generator.py`, `reconciliation.py`, `validation.py` | `test_edge_cases.py`, `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
 | Edge case: promise amount exceeds arrears. | `generator.py`, `reconciliation.py`, `validation.py` | `test_edge_cases.py`, `test_promise_lifecycle.py` | `docs/VALIDATION.md` ; status: Planned |
 | Edge case: disputed debt is treated as confirmed. | `generator.py`, `R-DISPUTE-01` | `test_generator.py`, `test_policy_config.py` | `docs/GENERATION.md` ; status: Active dispute suppresses collection; first-matching rule is retained |
@@ -172,6 +172,6 @@ This matrix maps every requirement statement and list item in the supplied brief
 |---|---|---|---|
 | Acceptance 1: Arrears calculations reconcile to source installments and allocations. | `generator.py`, `validation.py` | `test_generator.py` (slow loop-based reference) | `docs/GENERATION.md` ; status: Snapshot arrears and DPD match an independent loop-based reference implementation |
 | Acceptance 2: Prioritization decisions are explainable from balance, age, risk, and policy. | `generator.py`, `config/policy.yaml`, `collection_case` | `test_generator.py` | `docs/GENERATION.md` ; status: Cases store normalized score components, reason codes, and P1-P3 tiers using policy weights |
-| Acceptance 3: Contact restrictions are enforced using local time and account-level attempt history. | `contacts.py`, `config/policy.yaml` | `test_contact_policy.py` | `docs/VALIDATION.md` ; status: Planned |
+| Acceptance 3: Contact restrictions are enforced using local time and account-level attempt history. | `generator.py`, `config/policy.yaml`, `DecisionLog` | `test_generator.py`, `test_policy_config.py` | `docs/GENERATION.md` ; status: Local-time restrictions, weekly reservations, and scheduled/blocked/suppressed DecisionLog records are validated |
 | Acceptance 4: Promise outcomes match subsequent reconciled payments. | `reconciliation.py`, `promise_reconciliation` | `test_reconciliation.py`, `test_promise_lifecycle.py` | `docs/VALIDATION.md` ; status: Planned |
 | Acceptance 5: Regenerating with the same seed produces matching row counts and checksums. | `generator.py`, `rng.py`, `validation.py` | `test_generator.py` | `docs/GENERATION.md` ; status: Verified for generated CSV outputs |

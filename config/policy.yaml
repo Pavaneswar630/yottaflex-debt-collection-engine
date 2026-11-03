@@ -11,10 +11,11 @@ rules:
     end_local: "19:00"
     timezone_source: contact_preference.timezone
   R-CONTACT-02:
-    desc: Maximum 3 sent contact attempts per rolling 7 days per account.
+    desc: Maximum 3 sent attempts or reserved scheduled contact tasks per rolling 7 days per account.
     max_attempts: 3
     period_days: 7
     scope: account
+    scheduled_contacts_count_toward_cap: true
   R-DISPUTE-01:
     desc: Disputed debt suppresses dunning and routes the case to review.
     statuses: [disputed, under_review]

@@ -66,6 +66,7 @@ class PolicyConfigTests(unittest.TestCase):
         self.assertEqual(rules["R-CONTACT-02"]["max_attempts"], 3)
         self.assertEqual(rules["R-CONTACT-02"]["period_days"], 7)
         self.assertEqual(rules["R-CONTACT-02"]["scope"], "account")
+        self.assertTrue(rules["R-CONTACT-02"]["scheduled_contacts_count_toward_cap"])
         self.assertTrue(rules["R-DISPUTE-01"]["suppress_dunning"])
         self.assertTrue(rules["R-DISPUTE-01"]["route_to_review"])
         self.assertTrue(rules["R-HARDSHIP-01"]["pause_outbound_contact"])
