@@ -10,6 +10,7 @@ This repository contains a YAML source-of-truth data dictionary, hand-maintained
 
 - Python 3.10 or newer
 - GNU Make to use the convenience targets (or run the Python commands directly)
+- On Windows, the project installs `tzdata` so Python can resolve customer IANA time zones.
 
 ## Setup and run
 
@@ -18,10 +19,10 @@ python -m venv .venv
 # Activate the virtual environment using the command for your shell.
 python -m pip install -e ".[dev]"
 python -m yottaflex_debt_collection --help
-python -m yottaflex_debt_collection --loans 10000 --seed 20261022
+python -m yottaflex_debt_collection --dataset full --loans 10000 --seed 20261022
 ```
 
-The generator writes entity CSVs under `data/` and isolated labels to `ground_truth/latent_segments.csv`. Use `--output-dir PATH` to write beneath another dataset root. `--loans` defaults to 10,000 and `--seed` defaults to 20261022.
+The generator writes full data under `data/full/` and starter data under `data/starter/`. Each contains per-entity CSVs, a model-input-only `dataset.json`, a PostgreSQL `seed.sql`, and a checksum/count `manifest.json`. Labels are kept separately in the matching `ground_truth/full/` or `ground_truth/starter/` folder. Use `--dataset starter --loans 100` for the starter set; `--output-dir PATH` changes the root. Dataset outputs are ignored by Git and can be regenerated with a fixed seed.
 
 ## Development
 
@@ -34,7 +35,7 @@ make schema
 
 `make schema` regenerates `docs/DATA_DICTIONARY.md` from `schema/data_dictionary.yaml`. `schema/schema.sql` and `docs/ER.md` are hand-maintained; keep them aligned with the YAML dictionary. To verify generated documentation without modifying it, run `python tools/generate_schema.py --check`.
 
-`make data` creates the full 10,000-loan dataset; `make data-starter` creates a 100-loan sample; `make repro` checks repeat-generation checksums. The API, UI, demo, and AI-evaluation targets remain stubs. The as-of and generation dates are fixed to `2026-10-31`.
+`make data` creates the full 10,000-loan dataset under `data/full/`; `make data-starter` creates a 100-loan sample under `data/starter/`. Both produce isolated ground truth under the correspondingly named subfolder. Each data directory contains the CSV, JSON, SQL seed, and manifest exports. `make repro` checks repeat-generation checksums. The API, UI, demo, and AI-evaluation targets remain stubs. The as-of and generation dates are fixed to `2026-10-31`.
 
 The generator creates synthetic customer risk bands and timezones, accounts, loans, quarterly installment schedules, effective-dated contact preferences, optional dispute and hardship records, payments, oldest-first payment allocations, delinquency snapshots, and threshold-triggered collection cases. Cases retain weighted balance/age/risk components, reason codes, and P1-P3 tiers. Any unapplied payment balance is recorded explicitly. Latent behavior labels use the requested approximate proportions and are kept outside the input CSVs. No external or personal data is included. This project has no CI configuration by design.
 

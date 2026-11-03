@@ -3,6 +3,7 @@
 import csv
 import copy
 import hashlib
+import json
 import unittest
 from collections import Counter
 from calendar import monthrange
@@ -16,6 +17,7 @@ import yaml
 from yottaflex_debt_collection.generator import (
     CSV_COLUMNS,
     SEGMENT_PROBABILITIES,
+    _row_key,
     _first_matching_suppression_rule,
     _promise_outcome,
     _schedule_contact_decision,
@@ -89,8 +91,12 @@ class GeneratorTests(unittest.TestCase):
             second = generate_dataset(120, 71, second_dir)
             self.assertEqual(first, second)
 
-            first_files = sorted(Path(first_dir).rglob("*.csv"))
-            second_files = sorted(Path(second_dir).rglob("*.csv"))
+            first_files = sorted(
+                path for path in Path(first_dir).rglob("*") if path.is_file()
+            )
+            second_files = sorted(
+                path for path in Path(second_dir).rglob("*") if path.is_file()
+            )
             self.assertEqual(
                 [path.relative_to(first_dir) for path in first_files],
                 [path.relative_to(second_dir) for path in second_files],
@@ -104,6 +110,279 @@ class GeneratorTests(unittest.TestCase):
                     hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in second_files
                 ],
+            )
+            manifest_path = Path(first_dir) / "data" / "full" / "manifest.json"
+            manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["seed"], 71)
+            self.assertEqual(manifest["dataset"], "full")
+            self.assertEqual(manifest["row_counts"]["loan"], 120)
+            self.assertIn("ground_truth/full/ground_truth.csv", manifest["ground_truth_files"])
+            dataset_json = (manifest_path.parent / "dataset.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("latent_segments", dataset_json)
+            self.assertNotIn("ANOM-", dataset_json)
+            seed_sql = (manifest_path.parent / "seed.sql").read_text(
+                encoding="utf-8"
+            )
+            self.assertTrue(seed_sql.startswith("-- Generated synthetic seed data"))
+            self.assertIn('INSERT INTO "customer"', seed_sql)
+            self.assertTrue(seed_sql.rstrip().endswith("COMMIT;"))
+            for name, digest in manifest["files"].items():
+                self.assertEqual(
+                    hashlib.sha256((manifest_path.parent / name).read_bytes()).hexdigest(),
+                    digest,
+                )
+
+    def test_injected_anomalies_are_labeled_and_boundaries_remain_valid(self) -> None:
+        with TemporaryDirectory() as output_dir, TemporaryDirectory() as repeat_dir:
+            baseline = generate_dataset(1_000, 20261022)
+            injected = generate_dataset(
+                1_000,
+                20261022,
+                output_dir,
+                inject_anomalies=True,
+                anomaly_rows_per_type=5,
+            )
+            repeated = generate_dataset(
+                1_000,
+                20261022,
+                repeat_dir,
+                inject_anomalies=True,
+                anomaly_rows_per_type=5,
+            )
+            self.assertEqual(injected, repeated)
+            output_files = sorted(Path(output_dir).rglob("*.csv"))
+            repeated_files = sorted(Path(repeat_dir).rglob("*.csv"))
+            self.assertEqual(
+                [path.relative_to(output_dir) for path in output_files],
+                [path.relative_to(repeat_dir) for path in repeated_files],
+            )
+            self.assertEqual(
+                [hashlib.sha256(path.read_bytes()).hexdigest() for path in output_files],
+                [hashlib.sha256(path.read_bytes()).hexdigest() for path in repeated_files],
+            )
+            ground_truth_path = (
+                Path(output_dir) / "ground_truth" / "full" / "ground_truth.csv"
+            )
+            decisions_path = (
+                Path(output_dir)
+                / "ground_truth"
+                / "full"
+                / "expected_decisions.csv"
+            )
+            with ground_truth_path.open(encoding="utf-8", newline="") as source:
+                labels = list(csv.DictReader(source))
+            with decisions_path.open(encoding="utf-8", newline="") as source:
+                expected_decisions = list(csv.DictReader(source))
+            input_dir = Path(output_dir) / "data" / "full"
+            exported_json = (input_dir / "dataset.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("latent_segments", exported_json)
+            self.assertNotIn("ANOM-", exported_json)
+            manifest = json.loads(
+                (input_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["seed"], 20261022)
+            self.assertEqual(manifest["row_counts"]["loan"], 1_000)
+            self.assertEqual(manifest["anomaly_rows_per_type"], 5)
+            for name, digest in manifest["files"].items():
+                self.assertEqual(
+                    hashlib.sha256((input_dir / name).read_bytes()).hexdigest(),
+                    digest,
+                )
+            self.assertTrue(
+                (input_dir / "seed.sql")
+                .read_text(encoding="utf-8")
+                .rstrip()
+                .endswith("COMMIT;")
+            )
+
+            expected_types = {
+                "paid_account_in_collection",
+                "contact_outside_allowed_window",
+                "payment_allocated_to_wrong_installment",
+                "promise_exceeds_arrears",
+                "disputed_debt_treated_as_confirmed",
+                "near_miss_contact_at_0800",
+                "near_miss_promise_equals_arrears",
+            }
+            decision_counts = Counter(
+                row["issue_type"] for row in expected_decisions
+            )
+            self.assertEqual(set(decision_counts), expected_types)
+            self.assertTrue(all(count == 5 for count in decision_counts.values()))
+
+            label_keys: set[tuple[str, str]] = set()
+            for label in labels:
+                table = str(label["entity_type"])
+                entity_id = str(label["entity_id"])
+                if table == "payment_allocation" and "->" in entity_id:
+                    payment_id, installments = entity_id.split("|", 1)
+                    old_id, new_id = installments.split("->", 1)
+                    label_keys.add((table, f"{payment_id}|{old_id}"))
+                    label_keys.add((table, f"{payment_id}|{new_id}"))
+                else:
+                    label_keys.add((table, entity_id))
+            baseline_by_table = {
+                table: {_row_key(table, row): row for row in rows}
+                for table, rows in baseline.items()
+            }
+            injected_by_table = {
+                table: {_row_key(table, row): row for row in rows}
+                for table, rows in injected.items()
+            }
+            changed_keys = {
+                (table, row_id)
+                for table in baseline_by_table
+                for row_id in (
+                    set(baseline_by_table[table]) | set(injected_by_table[table])
+                )
+                if baseline_by_table[table].get(row_id)
+                != injected_by_table[table].get(row_id)
+            }
+            self.assertTrue(changed_keys)
+            self.assertEqual(changed_keys, changed_keys & label_keys)
+            affected_loan_ids = {
+                row["loan_id"] for row in expected_decisions
+            }
+            for snapshot in injected["delinquency_snapshot"]:
+                if snapshot["loan_id"] not in affected_loan_ids:
+                    continue
+                arrears, dpd = _reference_delinquency(
+                    str(snapshot["loan_id"]),
+                    date.fromisoformat(str(snapshot["snapshot_date"])),
+                    injected["installment"],
+                    injected["payment_allocation"],
+                    injected["payment"],
+                )
+                self.assertEqual(int(snapshot["arrears_amount"]), arrears)
+                self.assertEqual(int(snapshot["days_past_due"]), dpd)
+
+            cases_by_id = {
+                str(row["case_id"]): row for row in injected["collection_case"]
+            }
+            loans_by_id = {str(row["loan_id"]): row for row in injected["loan"]}
+            preferences_by_account = {
+                str(row["account_id"]): row
+                for row in injected["contact_preference"]
+            }
+            attempts_by_id = {
+                str(row["contact_attempt_id"]): row
+                for row in injected["contact_attempt"]
+            }
+            promises_by_id = {
+                str(row["promise_id"]): row for row in injected["promise_to_pay"]
+            }
+            expected_by_scenario = {
+                row["scenario_id"]: row for row in expected_decisions
+            }
+            disputes_by_id = {
+                str(row["dispute_id"]): row for row in injected["dispute"]
+            }
+            installments_by_id = {
+                str(row["installment_id"]): row
+                for row in injected["installment"]
+            }
+            allocations_by_pair = {
+                (str(row["payment_id"]), str(row["installment_id"])): row
+                for row in injected["payment_allocation"]
+            }
+            for label in labels:
+                if label["issue_type"] == "near_miss_contact_at_0800":
+                    attempt = attempts_by_id[str(label["entity_id"])]
+                    case = cases_by_id[str(attempt["case_id"])]
+                    preference = preferences_by_account[str(case["account_id"])]
+                    local_at = datetime.fromisoformat(
+                        str(attempt["attempted_at"])
+                    ).astimezone(ZoneInfo(str(preference["timezone"])))
+                    self.assertEqual((local_at.hour, local_at.minute), (8, 0))
+                elif label["issue_type"] == "near_miss_promise_equals_arrears":
+                    promise = promises_by_id[str(label["entity_id"])]
+                    case = cases_by_id[str(promise["case_id"])]
+                    recorded_date = datetime.fromisoformat(
+                        str(promise["recorded_at"])
+                    ).date()
+                    arrears, _ = _reference_delinquency(
+                        str(case["loan_id"]),
+                        recorded_date,
+                        injected["installment"],
+                        injected["payment_allocation"],
+                        injected["payment"],
+                    )
+                    self.assertEqual(int(promise["promised_amount"]), arrears)
+                elif label["issue_type"] == "contact_outside_allowed_window":
+                    attempt = attempts_by_id[str(label["entity_id"])]
+                    case = cases_by_id[str(attempt["case_id"])]
+                    preference = preferences_by_account[str(case["account_id"])]
+                    local_at = datetime.fromisoformat(
+                        str(attempt["attempted_at"])
+                    ).astimezone(ZoneInfo(str(preference["timezone"])))
+                    self.assertLess((local_at.hour, local_at.minute), (8, 0))
+                    self.assertEqual(attempt["outcome"], "connected")
+                elif label["issue_type"] == "payment_allocated_to_wrong_installment":
+                    payment_id, target_ids = str(label["entity_id"]).split("|", 1)
+                    _, new_installment_id = target_ids.split("->", 1)
+                    self.assertIn((payment_id, new_installment_id), allocations_by_pair)
+                    self.assertEqual(
+                        installments_by_id[new_installment_id]["sequence_number"], 3
+                    )
+                elif label["issue_type"] == "promise_exceeds_arrears":
+                    promise = promises_by_id[str(label["entity_id"])]
+                    case = cases_by_id[str(promise["case_id"])]
+                    recorded_date = datetime.fromisoformat(
+                        str(promise["recorded_at"])
+                    ).date()
+                    arrears, _ = _reference_delinquency(
+                        str(case["loan_id"]),
+                        recorded_date,
+                        injected["installment"],
+                        injected["payment_allocation"],
+                        injected["payment"],
+                    )
+                    self.assertGreater(int(promise["promised_amount"]), arrears)
+                elif label["issue_type"] == "disputed_debt_treated_as_confirmed":
+                    dispute = disputes_by_id[str(label["entity_id"])]
+                    case_id = str(expected_by_scenario[label["scenario_id"]]["case_id"])
+                    self.assertEqual(dispute["status"], "under_review")
+                    self.assertEqual(cases_by_id[case_id]["status"], "open")
+                elif label["issue_type"] == "paid_account_in_collection":
+                    case = cases_by_id[str(label["entity_id"])]
+                    self.assertEqual(case["status"], "open")
+                    self.assertEqual(
+                        loans_by_id[str(case["loan_id"])]["loan_status"], "paid_off"
+                    )
+                    case_events = sorted(
+                        (
+                            row
+                            for row in injected["state_event"]
+                            if row["entity_type"] == "collection_case"
+                            and row["case_id"] == case["case_id"]
+                        ),
+                        key=lambda row: str(row["changed_at"]),
+                    )
+                    self.assertEqual(case_events[-1]["new_state"], "open")
+                    self.assertEqual(case_events[-1]["previous_state"], "resolved")
+                    self.assertEqual(case_events[-1]["reason_code"], "CASE_REOPENED")
+
+            self.assertNotIn(
+                "issue_type",
+                {
+                    column
+                    for table, columns in CSV_COLUMNS.items()
+                    for column in columns
+                },
+            )
+            self.assertFalse(
+                any(
+                    "ANOM-" in str(value)
+                    for rows in injected.values()
+                    for row in rows
+                    for value in row.values()
+                )
             )
 
     def test_master_data_schedules_and_ground_truth_are_consistent(self) -> None:

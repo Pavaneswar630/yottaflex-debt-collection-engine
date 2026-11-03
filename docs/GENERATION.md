@@ -1,13 +1,15 @@
 # Synthetic dataset generation
 
-The CLI generates deterministic synthetic records without external or personal data. It accepts `--loans` and `--seed`; `--output-dir` optionally changes the output root:
+The CLI generates deterministic synthetic records without external or personal data. It accepts `--loans`, `--seed`, and `--dataset full|starter`; `--output-dir` optionally changes the output root, and `--anomaly-rows` sets the maximum examples per injected type:
 
 ```shell
-python -m yottaflex_debt_collection --loans 10000 --seed 20261022
-python -m yottaflex_debt_collection --loans 100 --seed 20261022 --output-dir sample
+python -m yottaflex_debt_collection --dataset full --loans 10000 --seed 20261022
+python -m yottaflex_debt_collection --dataset starter --loans 100 --seed 20261022 --anomaly-rows 50 --output-dir sample
 ```
 
-By default, entity CSVs are written to `data/` and behavior labels are written separately to `ground_truth/latent_segments.csv`. The labels never appear in customer, account, loan, installment, contact-preference, dispute, hardship, payment, or allocation files. Repeating the command with the same arguments produces byte-identical CSVs.
+The CLI first validates a clean baseline, then injects labeled exception and boundary examples. At full scale it injects up to 50 each for the five brief-defined issues (paid account in collection, out-of-window contact, wrong-installment allocation, oversized promise, and disputed debt treated as confirmed) and two valid near-misses (exactly 08:00 contact and a promise equal to arrears). Scale-limited runs inject as many as clean, distinct candidates permit. The injected examples are synthetic test fixtures, not recommended operational decisions.
+
+Full and starter outputs are separated under `data/full/` and `data/starter/`. Each contains one CSV per input table, `dataset.json` with input tables only, a PostgreSQL `seed.sql`, and `manifest.json` with fixed dates, seed, row counts, source provenance, and SHA-256 checksums. No latent behavior or anomaly labels are present in these input exports. Labels are kept in the corresponding `ground_truth/full/` or `ground_truth/starter/` directory, each containing `latent_segments.csv`, `ground_truth.csv` (primary anomaly IDs plus every changed derived row), and `expected_decisions.csv`. The injector snapshots all tables before and after mutation and fails if any changed row lacks a ground-truth label. It refreshes impacted installment status, delinquency snapshots, case scores, decision scores, and promise reconciliations before export. Repeating the command with the same arguments produces byte-identical exports and manifest checksums.
 
 Generation uses one `EntityRandomStreams` instance seeded from `--seed`, with named child streams for customers, accounts, loans, preferences, disputes, hardship requests, payments, and ground truth. Adding a child stream at the end of `ENTITY_STREAMS` preserves existing stream assignments. IDs are deterministic, zero-padded strings issued by `IdFactory`; all money values are integer cents.
 

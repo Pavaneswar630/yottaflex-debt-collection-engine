@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "Scaffold for a synthetic, explainable debt-collection workflow"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26", "pydantic>=2.6", "PyYAML>=6.0"]
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+    "tzdata>=2024.1; platform_system == 'Windows'",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

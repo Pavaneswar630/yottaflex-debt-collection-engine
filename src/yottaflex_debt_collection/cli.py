@@ -29,17 +29,39 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         default=Path("."),
-        help="dataset root; writes data/ and ground_truth/ here (default: current directory)",
+        help="output root; writes data/<dataset>/ and ground_truth/<dataset>/ here",
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=("full", "starter"),
+        help="output dataset name (defaults to starter for <=100 loans, otherwise full)",
+    )
+    parser.add_argument(
+        "--anomaly-rows",
+        type=int,
+        default=50,
+        help="maximum labeled examples per anomaly and near-miss type (default: 50)",
     )
     args = parser.parse_args(argv)
     if args.loans < 1:
         parser.error("--loans must be a positive integer")
     if args.seed < 0:
         parser.error("--seed must be a non-negative integer")
-    dataset = generate_dataset(args.loans, args.seed, args.output_dir)
+    if args.anomaly_rows < 0:
+        parser.error("--anomaly-rows must be non-negative")
+    dataset_name = args.dataset or ("starter" if args.loans <= 100 else "full")
+    dataset = generate_dataset(
+        args.loans,
+        args.seed,
+        args.output_dir,
+        inject_anomalies=True,
+        anomaly_rows_per_type=args.anomaly_rows,
+        dataset_name=dataset_name,
+    )
     print(
         f"Generated {len(dataset['loan'])} loans, "
         f"{len(dataset['installment'])} installments, "
-        f"{len(dataset['payment'])} payments in {args.output_dir.resolve()}"
+        f"{len(dataset['payment'])} payments in "
+        f"{(args.output_dir / 'data' / dataset_name).resolve()}"
     )
     return 0

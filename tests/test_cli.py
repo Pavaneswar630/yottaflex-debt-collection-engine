@@ -15,7 +15,58 @@ class CliTests(unittest.TestCase):
                 0,
             )
             self.assertTrue(
-                (Path(output_dir) / "ground_truth" / "latent_segments.csv").is_file()
+                (
+                    Path(output_dir)
+                    / "ground_truth"
+                    / "starter"
+                    / "latent_segments.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    Path(output_dir)
+                    / "ground_truth"
+                    / "starter"
+                    / "ground_truth.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    Path(output_dir)
+                    / "ground_truth"
+                    / "starter"
+                    / "expected_decisions.csv"
+                ).is_file()
+            )
+            data_dir = Path(output_dir) / "data" / "starter"
+            self.assertTrue((data_dir / "dataset.json").is_file())
+            self.assertTrue((data_dir / "seed.sql").is_file())
+            self.assertTrue((data_dir / "manifest.json").is_file())
+            self.assertEqual(
+                main(
+                    [
+                        "--dataset",
+                        "full",
+                        "--loans",
+                        "2",
+                        "--seed",
+                        "17",
+                        "--output-dir",
+                        output_dir,
+                        "--anomaly-rows",
+                        "0",
+                    ]
+                ),
+                0,
+            )
+            self.assertTrue((Path(output_dir) / "data" / "full" / "manifest.json").is_file())
+            self.assertTrue(
+                (
+                    Path(output_dir)
+                    / "ground_truth"
+                    / "full"
+                    / "expected_decisions.csv"
+                ).is_file()
             )
 
 

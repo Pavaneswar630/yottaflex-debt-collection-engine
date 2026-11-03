@@ -1,6 +1,9 @@
 """Reproducible, synthetic collection-data generation and CSV export."""
 
 import csv
+import copy
+import hashlib
+import json
 import math
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
@@ -1025,18 +1028,815 @@ def _create_promises(
     return promises, reconciliations, state_events
 
 
+def _row_key(table: str, row: Row) -> str:
+    key_fields = {
+        "payment_allocation": ("payment_id", "installment_id"),
+        "promise_reconciliation": ("promise_id", "payment_id"),
+    }
+    if table in key_fields:
+        return "|".join(str(row[field]) for field in key_fields[table])
+    id_fields = {
+        "customer": "customer_id",
+        "account": "account_id",
+        "loan": "loan_id",
+        "installment": "installment_id",
+        "delinquency_snapshot": "snapshot_id",
+        "collection_case": "case_id",
+        "decision_log": "decision_id",
+        "contact_preference": "contact_preference_id",
+        "dispute": "dispute_id",
+        "hardship_request": "hardship_request_id",
+        "payment": "payment_id",
+        "contact_attempt": "contact_attempt_id",
+        "promise_to_pay": "promise_id",
+        "state_event": "state_event_id",
+        "latent_segments": "loan_id",
+    }
+    return str(row[id_fields[table]])
+
+
+def _dataset_snapshot(dataset: Dataset) -> dict[str, dict[str, Row]]:
+    return {
+        table: {_row_key(table, row): copy.deepcopy(row) for row in rows}
+        for table, rows in dataset.items()
+    }
+
+
+def _promise_reconciliations_for(
+    promise: Row,
+    case: Row,
+    allocations_by_loan: dict[str, list[Row]],
+    payments_by_id: dict[str, Row],
+    preference: Row,
+    policy: dict[str, Any],
+) -> tuple[list[Row], str, str | None]:
+    loan_id = str(case["loan_id"])
+    recorded_at = datetime.fromisoformat(str(promise["recorded_at"]))
+    due_date = date.fromisoformat(str(promise["promised_date"]))
+    grace_end_date = due_date + timedelta(days=int(policy["reconcile"]["grace_days"]))
+    grace_end = datetime.combine(
+        grace_end_date,
+        time.max,
+        tzinfo=ZoneInfo(str(preference["timezone"])),
+    )
+    amounts: dict[str, int] = {}
+    posted_at_by_id: dict[str, datetime] = {}
+    for allocation in allocations_by_loan.get(loan_id, []):
+        payment_id = str(allocation["payment_id"])
+        payment = payments_by_id[payment_id]
+        if payment["status"] != "posted" or payment["posted_at"] is None:
+            continue
+        posted_at = datetime.fromisoformat(str(payment["posted_at"]))
+        if (
+            posted_at > recorded_at
+            and posted_at <= grace_end
+            and posted_at.date() <= AS_OF_DATE
+        ):
+            amounts[payment_id] = amounts.get(payment_id, 0) + int(
+                allocation["allocated_amount"]
+            )
+            posted_at_by_id[payment_id] = posted_at
+
+    cumulative = 0
+    kept_at: datetime | None = None
+    reconciliations: list[Row] = []
+    promised_amount = int(promise["promised_amount"])
+    tolerance_pct = int(policy["reconcile"]["tolerance_pct"])
+    for payment_id in sorted(amounts, key=lambda value: (posted_at_by_id[value], value)):
+        amount = amounts[payment_id]
+        cumulative += amount
+        threshold_reached = cumulative * 100 >= promised_amount * (100 - tolerance_pct)
+        if threshold_reached and kept_at is None:
+            kept_at = posted_at_by_id[payment_id]
+        reconciliations.append(
+            {
+                "promise_id": promise["promise_id"],
+                "payment_id": payment_id,
+                "reconciled_amount": amount,
+                "reconciled_at": posted_at_by_id[payment_id].isoformat(),
+                "match_status": (
+                    "excess"
+                    if cumulative > promised_amount
+                    else "matched"
+                    if threshold_reached
+                    else "partial"
+                ),
+            }
+        )
+    if kept_at is not None:
+        return reconciliations, "KEPT", kept_at.isoformat()
+    if grace_end_date <= AS_OF_DATE:
+        status = _promise_outcome(cumulative, promised_amount, tolerance_pct)
+        return reconciliations, status, grace_end.isoformat()
+    return reconciliations, "PENDING", None
+
+
+def _refresh_derived_records(
+    dataset: Dataset,
+    affected_loan_ids: set[str],
+    protected_promise_ids: set[str],
+    ids: IdFactory,
+    policy: dict[str, Any],
+) -> None:
+    loans_by_id = {str(row["loan_id"]): row for row in dataset["loan"]}
+    accounts_by_id = {str(row["account_id"]): row for row in dataset["account"]}
+    customers_by_id = {str(row["customer_id"]): row for row in dataset["customer"]}
+    cases_by_loan = {
+        str(row["loan_id"]): row for row in dataset["collection_case"]
+    }
+    cases_by_id = {str(row["case_id"]): row for row in dataset["collection_case"]}
+    installments_by_id = {
+        str(row["installment_id"]): row for row in dataset["installment"]
+    }
+    installments_by_loan: dict[str, list[Row]] = {}
+    for installment in dataset["installment"]:
+        installments_by_loan.setdefault(str(installment["loan_id"]), []).append(
+            installment
+        )
+    payments_by_id = {str(row["payment_id"]): row for row in dataset["payment"]}
+    payments_by_account: dict[str, list[Row]] = {}
+    for payment in dataset["payment"]:
+        payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
+    allocations_by_loan: dict[str, list[Row]] = {}
+    paid_by_installment: dict[str, int] = {}
+    for allocation in dataset["payment_allocation"]:
+        installment_id = str(allocation["installment_id"])
+        loan_id = str(installments_by_id[installment_id]["loan_id"])
+        allocations_by_loan.setdefault(loan_id, []).append(allocation)
+        paid_by_installment[installment_id] = (
+            paid_by_installment.get(installment_id, 0)
+            + int(allocation["allocated_amount"])
+        )
+    for installment in dataset["installment"]:
+        installment_id = str(installment["installment_id"])
+        due_date = date.fromisoformat(str(installment["due_date"]))
+        paid = paid_by_installment.get(installment_id, 0)
+        total_due = int(installment["total_due"])
+        installment["installment_status"] = (
+            "paid"
+            if paid >= total_due
+            else "partially_paid"
+            if paid > 0
+            else "past_due"
+            if due_date <= AS_OF_DATE
+            else "scheduled"
+        )
+
+    disputes_by_loan: dict[str, list[Row]] = {}
+    for dispute in dataset["dispute"]:
+        disputes_by_loan.setdefault(str(dispute["loan_id"]), []).append(dispute)
+    preferences_by_account = {
+        str(row["account_id"]): row for row in dataset["contact_preference"]
+    }
+    for snapshot in dataset["delinquency_snapshot"]:
+        loan_id = str(snapshot["loan_id"])
+        if loan_id not in affected_loan_ids:
+            continue
+        snapshot_date = date.fromisoformat(str(snapshot["snapshot_date"]))
+        arrears, dpd = calculate_delinquency(
+            installments_by_loan[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(str(loans_by_id[loan_id]["account_id"]), []),
+            snapshot_date,
+        )
+        snapshot["arrears_amount"] = arrears
+        snapshot["days_past_due"] = dpd
+        snapshot["dispute_status"] = "not_disputed"
+        for dispute in disputes_by_loan.get(loan_id, []):
+            filed_date = date.fromisoformat(str(dispute["filed_at"])[:10])
+            resolved_date = (
+                date.fromisoformat(str(dispute["resolved_at"])[:10])
+                if dispute["resolved_at"] is not None
+                else None
+            )
+            if filed_date <= snapshot_date:
+                if resolved_date is None or resolved_date > snapshot_date:
+                    snapshot["dispute_status"] = "under_review"
+                elif dispute["status"] == "resolved":
+                    snapshot["dispute_status"] = "resolved"
+
+    scoring_policy = policy["scoring"]
+    for loan_id in affected_loan_ids:
+        case = cases_by_loan.get(loan_id)
+        if case is None:
+            continue
+        loan = loans_by_id[loan_id]
+        account_id = str(case["account_id"])
+        account = accounts_by_id[account_id]
+        customer = customers_by_id[str(account["customer_id"])]
+        risk_band = str(customer["risk_band"])
+        arrears, dpd = calculate_delinquency(
+            installments_by_loan[loan_id],
+            allocations_by_loan.get(loan_id, []),
+            payments_by_account.get(account_id, []),
+            AS_OF_DATE,
+        )
+        (
+            balance_component,
+            age_component,
+            risk_component,
+            priority_score,
+            priority_tier,
+            reason_codes,
+        ) = _score_case(
+            arrears,
+            int(loan["principal_amount"]),
+            dpd,
+            RISK_SCORE_BY_BAND[risk_band],
+            risk_band,
+            scoring_policy,
+        )
+        case.update(
+            {
+                "balance_component": f"{balance_component:.4f}",
+                "age_component": f"{age_component:.4f}",
+                "risk_component": f"{risk_component:.4f}",
+                "priority_score": f"{priority_score:.2f}",
+                "priority_tier": priority_tier,
+                "reason_codes": reason_codes,
+            }
+        )
+        for decision in dataset["decision_log"]:
+            if decision["case_id"] == case["case_id"]:
+                decision["priority_score"] = case["priority_score"]
+
+    for promise in dataset["promise_to_pay"]:
+        promise_id = str(promise["promise_id"])
+        case = cases_by_id[str(promise["case_id"])]
+        preference = preferences_by_account[str(case["account_id"])]
+        new_rows, new_status, new_resolved_at = _promise_reconciliations_for(
+            promise,
+            case,
+            allocations_by_loan,
+            payments_by_id,
+            preference,
+            policy,
+        )
+        dataset["promise_reconciliation"] = [
+            row
+            for row in dataset["promise_reconciliation"]
+            if row["promise_id"] != promise_id
+        ]
+        dataset["promise_reconciliation"].extend(new_rows)
+        promise["status"] = new_status
+        promise["resolved_at"] = new_resolved_at
+
+        if promise_id in protected_promise_ids:
+            continue
+        events = [
+            row
+            for row in dataset["state_event"]
+            if row["entity_type"] == "promise_to_pay"
+            and row["promise_id"] == promise_id
+        ]
+        terminal = next(
+            (row for row in events if row["new_state"] != "PENDING"), None
+        )
+        old_status = str(terminal["new_state"]) if terminal is not None else "PENDING"
+        if old_status != new_status:
+            dataset["state_event"].append(
+                _state_event(
+                    ids,
+                    "promise_to_pay",
+                    None,
+                    promise_id,
+                    old_status,
+                    new_status,
+                    new_resolved_at or _timestamp(AS_OF_DATE),
+                    "PROMISE_RECONCILED",
+                )
+            )
+
+
+def _inject_labeled_anomalies(
+    dataset: Dataset,
+    ids: IdFactory,
+    policy: dict[str, Any],
+    requested_count: int,
+) -> tuple[list[Row], list[Row]]:
+    before = _dataset_snapshot(dataset)
+    cases_by_id = {str(row["case_id"]): row for row in dataset["collection_case"]}
+    installments_by_id = {
+        str(row["installment_id"]): row for row in dataset["installment"]
+    }
+    installments_by_loan: dict[str, list[Row]] = {}
+    for installment in dataset["installment"]:
+        installments_by_loan.setdefault(str(installment["loan_id"]), []).append(
+            installment
+        )
+    payments_by_id = {str(row["payment_id"]): row for row in dataset["payment"]}
+    payments_by_account: dict[str, list[Row]] = {}
+    for payment in dataset["payment"]:
+        payments_by_account.setdefault(str(payment["account_id"]), []).append(payment)
+    allocations_by_loan: dict[str, list[Row]] = {}
+    for allocation in dataset["payment_allocation"]:
+        loan_id = str(installments_by_id[str(allocation["installment_id"])]["loan_id"])
+        allocations_by_loan.setdefault(loan_id, []).append(allocation)
+    preferences_by_account = {
+        str(row["account_id"]): row for row in dataset["contact_preference"]
+    }
+    attempts_by_case = {
+        str(row["case_id"]): row for row in dataset["contact_attempt"]
+    }
+    decisions_by_case = {
+        str(row["case_id"]): row for row in dataset["decision_log"]
+    }
+    promises_by_case = {
+        str(row["case_id"]): row for row in dataset["promise_to_pay"]
+    }
+    used_cases: set[str] = set()
+    protected_promises: set[str] = set()
+    affected_loans: set[str] = set()
+    scenarios: list[dict[str, Any]] = []
+    ground_truth: list[Row] = []
+    expected_decisions: list[Row] = []
+
+    def add_scenario(
+        issue_type: str,
+        case: Row,
+        table: str,
+        entity_id: str,
+        rule_id: str,
+        expected_decision: str,
+        details: str,
+        related_ids: list[str] | None = None,
+    ) -> None:
+        number = len(scenarios) + 1
+        scenario_id = f"ANOM-2026-{number:06d}"
+        case_id = str(case["case_id"])
+        loan_id = str(case["loan_id"])
+        refs = list(
+            dict.fromkeys(
+                [case_id, loan_id, str(case["account_id"]), *(related_ids or [])]
+            )
+        )
+        scenario = {
+            "scenario_id": scenario_id,
+            "issue_type": issue_type,
+            "entity_type": table,
+            "entity_id": entity_id,
+            "case_id": case_id,
+            "loan_id": loan_id,
+            "rule_id": rule_id,
+            "expected_decision": expected_decision,
+            "related_ids": refs,
+        }
+        scenarios.append(scenario)
+        ground_truth.append(
+            {
+                "scenario_id": scenario_id,
+                "issue_type": issue_type,
+                "entity_type": table,
+                "entity_id": entity_id,
+                "is_primary": True,
+                "rule_id": rule_id,
+                "expected_decision": expected_decision,
+                "related_ids": "|".join(refs),
+                "details": details,
+            }
+        )
+        expected_decisions.append(
+            {
+                "scenario_id": scenario_id,
+                "issue_type": issue_type,
+                "case_id": case_id,
+                "loan_id": loan_id,
+                "expected_decision": expected_decision,
+                "rule_id": rule_id,
+                "details": details,
+            }
+        )
+        used_cases.add(case_id)
+        affected_loans.add(loan_id)
+
+    ordered_cases = sorted(dataset["collection_case"], key=lambda row: str(row["case_id"]))
+    paid_cases = [
+        row for row in ordered_cases
+        if row["suppression_rule_id"] == "R-PAIDOFF-01"
+        and not bool(
+            preferences_by_account[str(row["account_id"])]["do_not_contact"]
+        )
+    ]
+    out_window_cases = [
+        row for row in ordered_cases
+        if row["suppression_rule_id"] is None
+        and str(row["case_id"]) in attempts_by_case
+        and attempts_by_case[str(row["case_id"])]["outcome"] == "connected"
+    ]
+    dispute_cases = [
+        row for row in ordered_cases
+        if row["suppression_rule_id"] is None
+        and row["status"] == "open"
+    ]
+    eight_am_cases = [
+        row for row in ordered_cases
+        if row["suppression_rule_id"] is None
+        and decisions_by_case[str(row["case_id"])]["decision_type"] == "contact_allowed"
+    ]
+    wrong_allocation_candidates: list[tuple[Row, Row, str]] = []
+    for case in ordered_cases:
+        case_id = str(case["case_id"])
+        loan_id = str(case["loan_id"])
+        if case["suppression_rule_id"] is not None or case_id in promises_by_case:
+            continue
+        rows_by_sequence = {
+            int(row["sequence_number"]): row
+            for row in installments_by_loan[loan_id]
+        }
+        earlier = rows_by_sequence.get(2)
+        later = rows_by_sequence.get(3)
+        if earlier is None or later is None:
+            continue
+        case_open_date = date.fromisoformat(str(case["opened_at"])[:10])
+        target_id = str(later["installment_id"])
+        existing_pairs = {
+            (str(row["payment_id"]), str(row["installment_id"]))
+            for row in allocations_by_loan.get(loan_id, [])
+        }
+        for allocation in allocations_by_loan.get(loan_id, []):
+            if allocation["installment_id"] != earlier["installment_id"]:
+                continue
+            amount = int(allocation["allocated_amount"])
+            if amount > int(later["total_due"]):
+                continue
+            payment_id = str(allocation["payment_id"])
+            if (payment_id, target_id) in existing_pairs:
+                continue
+            previous_installment_id = str(allocation["installment_id"])
+            allocation["installment_id"] = target_id
+            crossing_date = _first_threshold_crossing_date(
+                installments_by_loan[loan_id],
+                allocations_by_loan.get(loan_id, []),
+                payments_by_account.get(str(case["account_id"]), []),
+                AS_OF_DATE,
+                int(policy["rules"]["R-CASE-01"]["dpd_threshold"]),
+            )
+            allocation["installment_id"] = previous_installment_id
+            if crossing_date == case_open_date:
+                wrong_allocation_candidates.append((case, allocation, target_id))
+                break
+
+    promise_candidates: list[tuple[Row, int]] = []
+    for case_id, promise in promises_by_case.items():
+        case = cases_by_id[case_id]
+        recorded_date = datetime.fromisoformat(str(promise["recorded_at"])).date()
+        arrears, _ = calculate_delinquency(
+            installments_by_loan[str(case["loan_id"])],
+            allocations_by_loan.get(str(case["loan_id"]), []),
+            payments_by_account.get(str(case["account_id"]), []),
+            recorded_date,
+        )
+        if arrears <= 0:
+            continue
+        preference = preferences_by_account[str(case["account_id"])]
+        candidate_statuses = []
+        for candidate_amount in (arrears, arrears + 1):
+            candidate = {**promise, "promised_amount": candidate_amount}
+            _, candidate_status, _ = _promise_reconciliations_for(
+                candidate,
+                case,
+                allocations_by_loan,
+                payments_by_id,
+                preference,
+                policy,
+            )
+            candidate_statuses.append(candidate_status)
+        if candidate_statuses == [promise["status"], promise["status"]]:
+            promise_candidates.append((case, arrears))
+
+    if requested_count > 0 and ordered_cases:
+        count = min(
+            requested_count,
+            len(ordered_cases) // 7,
+            len(paid_cases),
+            len(out_window_cases) // 2,
+            len(wrong_allocation_candidates),
+            len(promise_candidates) // 2,
+            len(dispute_cases),
+            len(eight_am_cases) // 2,
+        )
+
+        def available(rows: list[Row]) -> list[Row]:
+            return [row for row in rows if str(row["case_id"]) not in used_cases]
+
+        for case in available(paid_cases)[:count]:
+            loan_id = str(case["loan_id"])
+            account_id = str(case["account_id"])
+            case["status"] = "open"
+            case["closed_at"] = None
+            case["suppression_rule_id"] = None
+            preference = preferences_by_account[account_id]
+            local_at = datetime.combine(
+                AS_OF_DATE,
+                max(
+                    time.fromisoformat(str(preference["allowed_start_time"])),
+                    time.fromisoformat(str(policy["rules"]["R-CONTACT-01"]["start_local"])),
+                ),
+                tzinfo=ZoneInfo(str(preference["timezone"])),
+            )
+            case["next_action_at"] = local_at.isoformat()
+            decision = decisions_by_case[str(case["case_id"])]
+            decision.update(
+                {
+                    "rule_id": "R-CONTACT-01",
+                    "decision_type": "contact_allowed",
+                    "outcome": "allow",
+                    "reason": (
+                        f"scheduled within customer local contact window at "
+                        f"{local_at.isoformat()} (R-CONTACT-01)"
+                    ),
+                }
+            )
+            dataset["state_event"].append(
+                _state_event(
+                    ids,
+                    "collection_case",
+                    str(case["case_id"]),
+                    None,
+                    "resolved",
+                    "open",
+                    _timestamp(AS_OF_DATE),
+                    "CASE_REOPENED",
+                )
+            )
+            add_scenario(
+                "paid_account_in_collection",
+                case,
+                "collection_case",
+                str(case["case_id"]),
+                "R-PAIDOFF-01",
+                "close_paid_case",
+                "Paid-off loan remains open and is scheduled for contact.",
+                [str(decision["decision_id"])],
+            )
+
+        for case in available(out_window_cases)[:count]:
+            case_id = str(case["case_id"])
+            preference = preferences_by_account[str(case["account_id"])]
+            attempted_at = datetime.combine(
+                AS_OF_DATE,
+                time(7, 59),
+                tzinfo=ZoneInfo(str(preference["timezone"])),
+            )
+            attempt = attempts_by_case[case_id]
+            attempt["attempted_at"] = attempted_at.isoformat()
+            attempt["outcome"] = "connected"
+            case["next_action_at"] = None
+            decision = decisions_by_case[case_id]
+            decision.update(
+                {
+                    "rule_id": "R-CONTACT-01",
+                    "decision_type": "contact_blocked",
+                    "outcome": "block",
+                    "reason": "no permissible effective local contact time (R-CONTACT-01)",
+                }
+            )
+            add_scenario(
+                "contact_outside_allowed_window",
+                case,
+                "contact_attempt",
+                str(attempt["contact_attempt_id"]),
+                "R-CONTACT-01",
+                "block_contact",
+                "Synthetic contact attempt at 07:59 customer-local time.",
+                [str(decision["decision_id"]), str(attempt["contact_attempt_id"])],
+            )
+
+        for case, allocation, target_id in wrong_allocation_candidates:
+            if str(case["case_id"]) in used_cases:
+                continue
+            old_id = str(allocation["installment_id"])
+            payment_id = str(allocation["payment_id"])
+            allocation["installment_id"] = target_id
+            add_scenario(
+                "payment_allocated_to_wrong_installment",
+                case,
+                "payment_allocation",
+                f"{payment_id}|{old_id}->{target_id}",
+                "R-ALLOC-01",
+                "reallocate_oldest_due_first",
+                "Allocation was moved from installment 2 to installment 3.",
+                [payment_id, old_id, target_id],
+            )
+            if len([item for item in scenarios if item["issue_type"] == "payment_allocated_to_wrong_installment"]) >= count:
+                break
+
+        for case, arrears in promise_candidates:
+            if str(case["case_id"]) in used_cases:
+                continue
+            promise = promises_by_case[str(case["case_id"])]
+            promise["promised_amount"] = arrears + 1
+            protected_promises.add(str(promise["promise_id"]))
+            add_scenario(
+                "promise_exceeds_arrears",
+                case,
+                "promise_to_pay",
+                str(promise["promise_id"]),
+                "R-PROMISE-01",
+                "reject_oversized_promise",
+                f"Promise is {arrears + 1} cents while arrears are {arrears} cents.",
+                [str(promise["promise_id"])],
+            )
+            if len([item for item in scenarios if item["issue_type"] == "promise_exceeds_arrears"]) >= count:
+                break
+
+        for case in available(dispute_cases)[:count]:
+            case_id = str(case["case_id"])
+            loan_id = str(case["loan_id"])
+            account_id = str(case["account_id"])
+            dispute_id = ids.next_id("dispute")
+            filed_at = _timestamp(AS_OF_DATE - timedelta(days=1))
+            dataset["dispute"].append(
+                {
+                    "dispute_id": dispute_id,
+                    "account_id": account_id,
+                    "loan_id": loan_id,
+                    "filed_at": filed_at,
+                    "reason_code": "balance_question",
+                    "status": "under_review",
+                    "resolved_at": None,
+                    "created_at": UTC_GENERATED_AT,
+                }
+            )
+            add_scenario(
+                "disputed_debt_treated_as_confirmed",
+                case,
+                "dispute",
+                dispute_id,
+                "R-DISPUTE-01",
+                "suppress_and_route_to_review",
+                "An active dispute exists while the collection case remains open.",
+                [dispute_id, account_id],
+            )
+
+        for case in available(eight_am_cases)[:count]:
+            case_id = str(case["case_id"])
+            preference = preferences_by_account[str(case["account_id"])]
+            preference["allowed_start_time"] = "08:00:00"
+            local_at = datetime.combine(
+                AS_OF_DATE,
+                time(8, 0),
+                tzinfo=ZoneInfo(str(preference["timezone"])),
+            )
+            attempt = attempts_by_case[case_id]
+            attempt["attempted_at"] = local_at.isoformat()
+            attempt["outcome"] = "connected"
+            case["next_action_at"] = local_at.isoformat()
+            decision = decisions_by_case[case_id]
+            decision.update(
+                {
+                    "rule_id": "R-CONTACT-01",
+                    "decision_type": "contact_allowed",
+                    "outcome": "allow",
+                    "reason": (
+                        f"scheduled within customer local contact window at "
+                        f"{local_at.isoformat()} (R-CONTACT-01)"
+                    ),
+                }
+            )
+            add_scenario(
+                "near_miss_contact_at_0800",
+                case,
+                "contact_attempt",
+                str(attempt["contact_attempt_id"]),
+                "R-CONTACT-01",
+                "allow_contact",
+                "Valid boundary contact at exactly 08:00 customer-local time.",
+                [
+                    str(preference["contact_preference_id"]),
+                    str(decision["decision_id"]),
+                ],
+            )
+
+        for case, arrears in promise_candidates:
+            if str(case["case_id"]) in used_cases:
+                continue
+            promise = promises_by_case[str(case["case_id"])]
+            promise["promised_amount"] = arrears
+            protected_promises.add(str(promise["promise_id"]))
+            add_scenario(
+                "near_miss_promise_equals_arrears",
+                case,
+                "promise_to_pay",
+                str(promise["promise_id"]),
+                "R-PROMISE-01",
+                "allow_full_arrears_promise",
+                f"Promise equals arrears exactly at {arrears} cents.",
+                [str(promise["promise_id"])],
+            )
+            if len([item for item in scenarios if item["issue_type"] == "near_miss_promise_equals_arrears"]) >= count:
+                break
+
+    _refresh_derived_records(
+        dataset,
+        affected_loans,
+        protected_promises,
+        ids,
+        policy,
+    )
+
+    label_fields = (
+        "scenario_id",
+        "issue_type",
+        "entity_type",
+        "entity_id",
+        "is_primary",
+        "rule_id",
+        "expected_decision",
+        "related_ids",
+        "details",
+    )
+    labelled_changes: set[tuple[str, str]] = set()
+    scenario_ids_by_reference: dict[str, set[str]] = {}
+    for scenario in scenarios:
+        scenario_id = str(scenario["scenario_id"])
+        for reference in scenario["related_ids"]:
+            scenario_ids_by_reference.setdefault(reference, set()).add(scenario_id)
+        table = str(scenario["entity_type"])
+        entity_id = str(scenario["entity_id"])
+        if table == "payment_allocation":
+            payment_id, old_target = entity_id.split("|", 1)
+            old_id, new_id = old_target.split("->", 1)
+            labelled_changes.add((table, f"{payment_id}|{old_id}"))
+            labelled_changes.add((table, f"{payment_id}|{new_id}"))
+        else:
+            labelled_changes.add((table, entity_id))
+
+    after = _dataset_snapshot(dataset)
+    for table in sorted(set(before) | set(after)):
+        prior_rows = before.get(table, {})
+        current_rows = after.get(table, {})
+        for row_id in sorted(set(prior_rows) | set(current_rows)):
+            if prior_rows.get(row_id) == current_rows.get(row_id):
+                continue
+            if (table, row_id) in labelled_changes:
+                continue
+            row = current_rows.get(row_id) or prior_rows[row_id]
+            references = {
+                str(value) for value in row.values() if isinstance(value, str)
+            }
+            related_scenarios = sorted(
+                {
+                    scenario_id
+                    for reference in references
+                    for scenario_id in scenario_ids_by_reference.get(reference, ())
+                }
+            )
+            if not related_scenarios:
+                raise ValueError(f"Unlabelled injected change in {table} row {row_id}")
+            ground_truth.append(
+                {
+                    "scenario_id": related_scenarios[0],
+                    "issue_type": "derived_recalculation",
+                    "entity_type": table,
+                    "entity_id": row_id,
+                    "is_primary": False,
+                    "rule_id": "DERIVED-RECOMPUTE",
+                    "expected_decision": "recomputed_from_source",
+                    "related_ids": "|".join(related_scenarios),
+                    "details": "Derived row refreshed after the labeled source mutation.",
+                }
+            )
+            labelled_changes.add((table, row_id))
+    changed_rows = {
+        (table, row_id)
+        for table in set(before) | set(after)
+        for row_id in set(before.get(table, {})) | set(after.get(table, {}))
+        if before.get(table, {}).get(row_id) != after.get(table, {}).get(row_id)
+    }
+    if changed_rows != labelled_changes.intersection(changed_rows):
+        raise ValueError("Anomaly injection changed rows without ground-truth labels")
+
+    return ground_truth, expected_decisions
+
+
 def generate_dataset(
     loans: int = 10_000,
     seed: int = DEFAULT_SEED,
     output_dir: Path | str | None = None,
+    inject_anomalies: bool = False,
+    anomaly_rows_per_type: int = 50,
+    dataset_name: str | None = None,
 ) -> Dataset:
     """Generate synthetic records, optionally writing CSVs under ``output_dir``.
 
-    CSV tables are written to ``data/`` and the label-only segment file to
-    ``ground_truth/latent_segments.csv``. No customer PII or external data is used.
+    Input exports are written below ``data/<dataset_name>/`` and isolated labels
+    below ``ground_truth/<dataset_name>/``. Optional anomaly injection is
+    performed only after the clean baseline passes validation. No customer PII
+    or external data is used.
     """
     if isinstance(loans, bool) or not isinstance(loans, int) or loans < 1:
         raise ValueError("loans must be a positive integer")
+    if (
+        isinstance(anomaly_rows_per_type, bool)
+        or not isinstance(anomaly_rows_per_type, int)
+        or anomaly_rows_per_type < 0
+    ):
+        raise ValueError("anomaly_rows_per_type must be a non-negative integer")
+    if dataset_name is None:
+        dataset_name = "starter" if loans <= 100 else "full"
+    if dataset_name not in {"full", "starter"}:
+        raise ValueError("dataset_name must be 'full' or 'starter'")
     policy = _load_policy()
     threshold_days = policy["rules"]["R-CASE-01"]["dpd_threshold"]
     scoring_policy = policy["scoring"]
@@ -1584,8 +2384,21 @@ def generate_dataset(
         ],
     }
     validate_dataset(dataset)
+    ground_truth: list[Row] = []
+    expected_decisions: list[Row] = []
+    if inject_anomalies:
+        ground_truth, expected_decisions = _inject_labeled_anomalies(
+            dataset, ids, policy, anomaly_rows_per_type
+        )
     if output_dir is not None:
-        write_dataset(dataset, Path(output_dir))
+        write_dataset(
+            dataset,
+            Path(output_dir),
+            ground_truth,
+            expected_decisions,
+            seed=seed,
+            dataset_name=dataset_name,
+        )
     return dataset
 
 
@@ -2246,7 +3059,11 @@ def validate_dataset(dataset: Dataset) -> None:
                     else {
                         "open": {"paused", "resolved", "closed"},
                         "paused": {"open", "resolved", "closed"},
-                        "resolved": {"closed"},
+                        "resolved": (
+                            {"closed", "open"}
+                            if event["reason_code"] == "CASE_REOPENED"
+                            else {"closed"}
+                        ),
                         "closed": set(),
                     }.get(previous, set())
                 )
@@ -2299,10 +3116,20 @@ def validate_dataset(dataset: Dataset) -> None:
         raise ValueError("ground-truth labels must contain each loan exactly once")
 
 
-def write_dataset(dataset: Dataset, output_dir: Path) -> None:
-    """Write stable UTF-8 CSVs, keeping latent labels outside model input tables."""
-    data_dir = output_dir / "data"
-    ground_truth_dir = output_dir / "ground_truth"
+def write_dataset(
+    dataset: Dataset,
+    output_dir: Path,
+    ground_truth: list[Row] | None = None,
+    expected_decisions: list[Row] | None = None,
+    *,
+    seed: int = DEFAULT_SEED,
+    dataset_name: str = "full",
+) -> None:
+    """Write reproducible CSV, JSON, SQL and manifest exports."""
+    if dataset_name not in {"full", "starter"}:
+        raise ValueError("dataset_name must be 'full' or 'starter'")
+    data_dir = output_dir / "data" / dataset_name
+    ground_truth_dir = output_dir / "ground_truth" / dataset_name
     data_dir.mkdir(parents=True, exist_ok=True)
     ground_truth_dir.mkdir(parents=True, exist_ok=True)
     for table, columns in CSV_COLUMNS.items():
@@ -2319,3 +3146,156 @@ def write_dataset(dataset: Dataset, output_dir: Path) -> None:
         )
         writer.writeheader()
         writer.writerows(dataset["latent_segments"])
+    ground_truth_columns = (
+        "scenario_id",
+        "issue_type",
+        "entity_type",
+        "entity_id",
+        "is_primary",
+        "rule_id",
+        "expected_decision",
+        "related_ids",
+        "details",
+    )
+    with (ground_truth_dir / "ground_truth.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as output:
+        writer = csv.DictWriter(
+            output, fieldnames=ground_truth_columns, lineterminator="\n"
+        )
+        writer.writeheader()
+        writer.writerows(ground_truth or [])
+    expected_decision_columns = (
+        "scenario_id",
+        "issue_type",
+        "case_id",
+        "loan_id",
+        "expected_decision",
+        "rule_id",
+        "details",
+    )
+    with (ground_truth_dir / "expected_decisions.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as output:
+        writer = csv.DictWriter(
+            output,
+            fieldnames=expected_decision_columns,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(expected_decisions or [])
+
+    input_dataset = {
+        table: rows for table, rows in dataset.items() if table != "latent_segments"
+    }
+    json_path = data_dir / "dataset.json"
+    with json_path.open("w", encoding="utf-8", newline="\n") as output:
+        json.dump(input_dataset, output, ensure_ascii=True, separators=(",", ":"))
+        output.write("\n")
+
+    table_order = (
+        "customer",
+        "account",
+        "loan",
+        "installment",
+        "contact_preference",
+        "dispute",
+        "hardship_request",
+        "payment",
+        "payment_allocation",
+        "delinquency_snapshot",
+        "collection_case",
+        "decision_log",
+        "contact_attempt",
+        "promise_to_pay",
+        "promise_reconciliation",
+        "state_event",
+    )
+    sql_path = data_dir / "seed.sql"
+    with sql_path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write("-- Generated synthetic seed data; see manifest.json for provenance.\n")
+        output.write("BEGIN;\n")
+        for table in table_order:
+            columns = CSV_COLUMNS[table]
+            rows = dataset[table]
+            quoted_columns = ", ".join(f'"{column}"' for column in columns)
+            for start in range(0, len(rows), 250):
+                output.write(
+                    f'INSERT INTO "{table}" ({quoted_columns}) VALUES\n'
+                )
+                batch = rows[start : start + 250]
+                for index, row in enumerate(batch):
+                    values = ", ".join(_sql_literal(row[column]) for column in columns)
+                    suffix = "," if index < len(batch) - 1 else ";"
+                    output.write(f"({values}){suffix}\n")
+        output.write("COMMIT;\n")
+
+    data_artifacts = sorted(
+        [
+            *data_dir.glob("*.csv"),
+            json_path,
+            sql_path,
+        ],
+        key=lambda path: path.name,
+    )
+    ground_truth_artifacts = sorted(ground_truth_dir.glob("*.csv"))
+    scenario_issue_types = {
+        str(row["issue_type"])
+        for row in ground_truth or []
+        if row["issue_type"] != "derived_recalculation"
+    }
+    anomaly_counts = {
+        issue_type: sum(
+            row["issue_type"] == issue_type for row in ground_truth or []
+        )
+        for issue_type in scenario_issue_types
+    }
+    manifest = {
+        "dataset": dataset_name,
+        "seed": seed,
+        "loans": len(dataset["loan"]),
+        "as_of_date": AS_OF_DATE.isoformat(),
+        "generation_date": GENERATION_DATE.isoformat(),
+        "anomaly_rows_per_type": max(anomaly_counts.values(), default=0),
+        "source": {
+            "type": "synthetic",
+            "external_data_used": False,
+            "generator": "yottaflex-debt-collection-engine",
+        },
+        "row_counts": {table: len(rows) for table, rows in input_dataset.items()},
+        "ground_truth_row_counts": {
+            "latent_segments": len(dataset["latent_segments"]),
+            "ground_truth": len(ground_truth or []),
+            "expected_decisions": len(expected_decisions or []),
+        },
+        "files": {
+            path.name: _sha256_file(path) for path in data_artifacts
+        },
+        "ground_truth_files": {
+            f"ground_truth/{dataset_name}/{path.name}": _sha256_file(path)
+            for path in ground_truth_artifacts
+        },
+    }
+    with (data_dir / "manifest.json").open(
+        "w", encoding="utf-8", newline="\n"
+    ) as output:
+        json.dump(manifest, output, ensure_ascii=True, indent=2, sort_keys=True)
+        output.write("\n")
+
+
+def _sql_literal(value: str | int | bool | None) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(value)
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

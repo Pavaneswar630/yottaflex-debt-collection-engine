@@ -4,10 +4,10 @@ setup:
 	python -m pip install -e ".[dev]"
 
 data:
-	python -m yottaflex_debt_collection --loans 10000 --seed 20261022
+	python -m yottaflex_debt_collection --dataset full --loans 10000 --seed 20261022 --anomaly-rows 50
 
 data-starter:
-	python -m yottaflex_debt_collection --loans 100 --seed 20261022
+	python -m yottaflex_debt_collection --dataset starter --loans 100 --seed 20261022 --anomaly-rows 50
 
 validate:
 	python -c "from yottaflex_debt_collection.schema_loader import load_dictionary; print(f'Validated {len(load_dictionary().tables)} tables')"
