@@ -103,17 +103,17 @@ This matrix maps every requirement statement and list item in the supplied brief
 | **V15** Evaluate correct derived values and reconciliation. | `generator.py`, `reconciliation.py`, `validation.py` | `test_derived_values.py`, `test_reconciliation.py` | `docs/VALIDATION.md` ; status: Planned |
 | **V16** Cover normal, boundary, failure, and exception scenarios. | `generator.py`, `tests/test_integrity_detectors.py` | `test_integrity_detectors.py::test_minimum_coverage_for_normal_boundary_failure_and_exception` | `docs/coverage_report.md` ; status: Minimum counts asserted for normal, boundary, failure, and exception scenarios |
 | **V17** Keep ground truth separate from detector inputs. | `generator.py`, `detectors.py`, `evaluation.py` | `test_integrity_detectors.py::test_blind_detector_module_cannot_reference_label_locations` | `docs/GENERATION.md`, `docs/coverage_report.md` ; status: Detectors consume data tables only; evaluation reads labels separately |
-| **V18** Demonstrate fixed-seed reproducibility. | `generator.py` | `test_reproducibility.py` | `docs/GENERATION.md` ; status: Planned |
-| **V19** Provide documentation, fixed seed, source manifest, and validation summary. | `generator.py`, `validation.py` | `test_export_manifest.py` | README; `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: Planned |
-| **V20** Regenerate twice with the same seed and compare row counts and checksums. | `generator.py`, `validation.py` | `test_reproducibility.py` | `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: Planned |
+| **V18** Demonstrate fixed-seed reproducibility. | `generator.py`, `tools/repro.py` | `tests/test_repro.py` | `docs/GENERATION.md`, `docs/validation_summary.md` ; status: Two independent full-scale generations produced identical exports |
+| **V19** Provide documentation, fixed seed, source manifest, and validation summary. | `generator.py`, `tools/repro.py` | `tests/test_generator.py`, `tests/test_repro.py` | README; `docs/GENERATION.md`; `docs/validation_summary.md` ; status: Per-file SHA-256 manifest and reproducibility summary implemented |
+| **V20** Regenerate twice with the same seed and compare row counts and checksums. | `tools/repro.py`, `generator.py` | `tests/test_repro.py` | `docs/GENERATION.md`, `docs/validation_summary.md` ; status: `make repro` compares table row counts and every export checksum |
 | **V21** Score blind detectors by precision, recall, and F1 for the initial three issue types. | `detectors.py`, `evaluation.py` | `test_integrity_detectors.py::test_detectors_find_three_primary_issue_types_and_metrics` | `reports/detector_metrics.md`, `docs/coverage_report.md` ; status: Implemented; evaluation excludes derived-only labels |
 
 ## Exports, provenance, and submission
 
 | Brief sentence | Module | Test | Doc |
 |---|---|---|---|
-| **P01** Export CSV, JSON, and SQL seed data. | `generator.py` | `test_export_formats.py` | `docs/GENERATION.md` ; status: Planned |
-| **P02** Include README, schema/data dictionary, generator command, fixed seed, source manifest, and validation summary. | `cli.py`, `generator.py`, `validation.py` | `test_export_manifest.py` | README; `docs/DATA_DICTIONARY.md`; `docs/GENERATION.md`; `docs/VALIDATION.md` ; status: README and this matrix exist; remaining docs planned |
+| **P01** Export CSV, JSON, and SQL seed data with deterministic formatting. | `generator.py` | `tests/test_generator.py::GeneratorTests::test_seed_repeats_records_and_export_checksums` | `docs/GENERATION.md` ; status: CSVs use LF line endings and primary-key ordering; JSON and SQL inserts use primary-key ordering |
+| **P02** Include README, schema/data dictionary, generator command, fixed seed, source manifest, and validation summary. | `cli.py`, `generator.py`, `tools/repro.py` | `tests/test_generator.py`, `tests/test_repro.py` | README; `docs/DATA_DICTIONARY.md`; `docs/GENERATION.md`; `docs/validation_summary.md` ; status: Implemented |
 | **P03** External data is optional. | `generator.py` | `test_synthetic_only_mode.py` | README; `docs/GENERATION.md` ; status: Planned |
 | **P04** For any external source, record URL, dataset/version, retrieval date, license/terms, attribution, transformations, and discarded fields. | `generator.py` | `test_source_manifest.py` | `docs/GENERATION.md` ; status: Planned; no external data currently used |
 | **P05** Use only legally accessible and redistributable data; do not bypass access controls or collect confidential/personal information. | `generator.py` | `test_synthetic_only_mode.py`, `test_source_manifest.py` | README; `docs/GENERATION.md` ; status: No external or personal data included |
@@ -136,6 +136,15 @@ This matrix maps every requirement statement and list item in the supplied brief
 | Fix the as-of date to 2026-10-31 and define a fixed generation date. | `settings.py` | `test_foundations.py::ReproducibilityDefaultsTests` | `docs/ASSUMPTIONS.md`, `docs/GENERATION.md` |
 | Validate the dictionary using a small Pydantic loader. | `schema_loader.py` | `tests/test_schema_loader.py` | `schema/data_dictionary.yaml` |
 | Keep the local changes committed and push them to the already-existing public GitHub repository. | Git repository; GitHub remote | `git status`, `git ls-remote` | README ; status: Commit `7dd688c` pushed; branch verified on remote |
+
+## H42-44 export and reproducibility
+
+| Brief sentence | Module | Test | Doc |
+|---|---|---|---|
+| Export CSV with LF line endings and rows sorted by primary key; export JSON and SQL seed deterministically. | `generator.py` | `tests/test_generator.py::GeneratorTests::test_seed_repeats_records_and_export_checksums` | `docs/GENERATION.md` ; status: Implemented |
+| `make repro` generates twice and compares row counts and per-file SHA-256 checksums. | `tools/repro.py`, `Makefile` | `tests/test_repro.py` | `docs/validation_summary.md` ; status: Implemented; full-scale proof recorded |
+| Commit a validation summary containing checksums and reproducibility proof. | `tools/repro.py` | `tests/test_repro.py` | `docs/validation_summary.md` ; status: Summary generated; awaiting user review and commit |
+| Tag the core submission as `v0.9` after reviewing and committing export/repro work. | Git release process | User-run Git commands | Git tag `v0.9` ; status: Not tagged; awaiting user review |
 
 ## Numbered workflow rules and generation steps
 
